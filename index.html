@@ -146,7 +146,7 @@ body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
   <h4><span class="n">6</span>The other panels</h4>
   <ul>
     <li><b>People / Motion:</b> the most reliable readings on laptop WiFi.</li>
-    <li><b>Breathing / Heart:</b> filled in only once RuView trusts them. On laptop WiFi they need calibration with exactly one person present. These are not medical readings.</li>
+    <li><b>Breathing / Heart:</b> filled in only once RuView trusts them. Laptop WiFi is too coarse to see breathing, so they stay blank until you add an ESP32 sensor. These are not medical readings.</li>
     <li><b>Signal waterfall:</b> each row is a WiFi signal, with color showing its strength over time. Movement appears as streaks.</li>
     <li><b>Pose:</b> needs ESP32 data, and even then it's a rough placeholder.</li>
     <li><b>Event log:</b> what changed and when.</li>
@@ -161,7 +161,7 @@ body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
 
   <h4><span class="n">8</span>What each setup can do</h4>
   <table><thead><tr><th>Setup</th><th>Presence</th><th>Vitals</th><th>Room</th><th>Position</th></tr></thead>
-  <tbody><tr><td>Laptop WiFi</td><td>✓ rough</td><td>after calibration</td><td>–</td><td>–</td></tr>
+  <tbody><tr><td>Laptop WiFi</td><td>✓ rough</td><td>–</td><td>–</td><td>–</td></tr>
   <tr><td>1–2 ESP32 (~$9 each)</td><td>✓</td><td>✓</td><td>nearest</td><td>–</td></tr>
   <tr><td>3+ ESP32</td><td>✓</td><td>✓</td><td>✓</td><td>±1.5 m</td></tr></tbody></table>
   <div class="why"><b>Why ESP32 boards are better:</b> each one measures 56+ separate channels of every WiFi signal, instead of one strength number. Placed around your home, they give the several viewpoints needed to find you.</div>
@@ -896,13 +896,14 @@ function checks(){
   else if (S.mode === 'stale' || (age != null && age > 5000)) add('fail', 'Live data arriving', 'Frames stopped. Check the sensor/WiFi and that only one program uses UDP 5005.');
   else add('ok', 'Live data arriving', `${$('fps').textContent}${age != null ? ` · last frame ${Math.round(age)} ms ago` : ''}`);
 
-  if (S.quality == null) add('na', 'Signal quality', 'No reading yet.');
+  if (S.quality == null) add('na', 'Signal quality', live && rssiSource() ? 'Not reported on laptop WiFi. It comes with ESP32 sensor data.' : 'No reading yet.');
   else add(S.quality >= 0.4 ? 'ok' : 'warn', 'Signal quality', `${S.quality.toFixed(2)} ${S.quality >= 0.4 ? '(good)' : '— aim for 0.40+; move sensor closer / away from metal'}`);
 
   add(S.persons == null ? 'na' : 'ok', 'Presence detection', S.persons == null ? 'No reading yet.' : S.persons ? `${S.persons} person${S.persons > 1 ? 's' : ''} detected` : 'Working — room currently empty');
 
   const vOk = (S.bConf ?? 0) >= 0.5;
-  if (live && S.vitalsWithheld) add('warn', 'Breathing / heart readings', `Server is withholding vitals: ${S.vitalsWithheld}.`);
+  if (live && rssiSource()) add('na', 'Breathing / heart readings', 'Needs extra hardware, not an error. Laptop WiFi is too coarse to see breathing, so RuView withholds these. An ESP32-S3 board (~$9) unlocks them.');
+  else if (live && S.vitalsWithheld) add('warn', 'Breathing / heart readings', `Server is withholding vitals until calibrated with exactly one person in the room.`);
   else add(S.persons ? (vOk ? 'ok' : 'warn') : 'na', 'Breathing / heart readings',
       !S.persons ? 'Needs someone in the room.' : vOk ? `Breathing confidence ${S.bConf.toFixed(2)}` : 'Low confidence — sit still within 1–2 m of the sensor for 30 s.');
 
@@ -929,6 +930,14 @@ function renderChecks(){
   $('checks').innerHTML = C.map(c => `<li class="${c.st}"><span class="ic">${icon[c.st]}</span><b>${esc(c.title)}</b><span class="d">${esc(c.detail)}</span></li>`).join('');
 }
 
+// why vitals are blank, in plain words (null = show the confidence instead)
+function vitalsNote(){
+  if (S.mode === 'demo') return null;
+  if (rssiSource()) return 'needs an ESP32 sensor';
+  if (S.vitalsWithheld) return 'withheld until calibrated';
+  return null;
+}
+
 // ---------- DOM updates ----------
 const fmt = (v, d = 1) => v == null ? '–' : v.toFixed(d);
 const pct = (el, v) => { $(el).style.width = (v == null ? 0 : Math.max(0, Math.min(1, v)) * 100) + '%'; };
@@ -936,11 +945,12 @@ let lastState = null, fpsFrames = 0, fpsT = performance.now();
 function updateDOM(){
   $('kPersons').textContent = S.persons ?? '–';
   $('kPresence').textContent = S.persons == null ? '—' : S.persons > 0 ? 'room occupied' : 'room empty';
-  $('kBreath').textContent = fmt(S.breath); $('kBreathC').textContent = S.vitalsWithheld && S.mode !== 'demo' ? 'withheld — needs calibration' : `confidence ${fmt(S.bConf, 2)}`; pct('bBreath', S.bConf);
-  $('kHeart').textContent = fmt(S.heart, 0); $('kHeartC').textContent = S.vitalsWithheld && S.mode !== 'demo' ? 'withheld — needs calibration' : `confidence ${fmt(S.hConf, 2)}`; pct('bHeart', S.hConf);
+  $('kBreath').textContent = fmt(S.breath); $('kBreathC').textContent = vitalsNote() || `confidence ${fmt(S.bConf, 2)}`; pct('bBreath', S.bConf);
+  $('kHeart').textContent = fmt(S.heart, 0); $('kHeartC').textContent = vitalsNote() || `confidence ${fmt(S.hConf, 2)}`; pct('bHeart', S.hConf);
   $('kMotion').textContent = fmt(S.motion, 2); pct('bMotion', S.motion);
   $('kActivity').textContent = S.activity ? String(S.activity).replace(/_/g, ' ') : '—';
   $('kQuality').textContent = fmt(S.quality, 2); pct('bQuality', S.quality);
+  $('kQualityS').textContent = S.quality == null && S.mode !== 'demo' && rssiSource() ? 'not available on laptop WiFi' : 'aim for > 0.40';
   $('kQuality').style.color = S.quality == null ? '' : S.quality > .4 ? css('--ok') : css('--warn');
   $('kNodes').textContent = S.nodes.length || '–'; $('kSubs').textContent = `${S.subs || '—'} ${rssiSource() ? 'access points heard' : 'subcarriers'}`;
   $('srcMeta').textContent = [S.source && `source: ${S.source}`, S.sourceState && `state: ${S.sourceState}`].filter(Boolean).join(' · ') || '—';

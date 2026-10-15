@@ -31,7 +31,7 @@ cd v2
 cargo build --release -p wifi-densepose-sensing-server
 ```
 
-In laptop WiFi mode the server withholds breathing and heart rate until it has been calibrated with exactly one person present. Pose and location also need ESP32 CSI nodes.
+In laptop WiFi mode, breathing, heart rate and signal quality stay blank: RuView's calibration needs ESP32 CSI data, so it withholds them rather than guess. Pose and location also need ESP32 nodes.
 
 ## Run (manual)
 
