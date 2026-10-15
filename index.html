@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RuView Dashboard</title>
+<style>
+:root{
+  --bg:#f5f6f8; --panel:#ffffff; --ink:#15181d; --muted:#626b78; --line:#e2e5ea;
+  --accent:#2f6fd6; --breath:#1b9e77; --heart:#d6455d; --motion:#c27c0e; --person:#6a4fc9;
+  --ok:#1f8a4c; --warn:#b7791f; --bad:#c53030; --chip:#eef1f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0f1216; --panel:#171b21; --ink:#e7eaee; --muted:#9099a6; --line:#262c35;
+    --accent:#6ea0ff; --breath:#4fd1a5; --heart:#ff7a8e; --motion:#f0b44c; --person:#a48bff;
+    --ok:#48c47a; --warn:#e0a84a; --bad:#ff6b6b; --chip:#212731; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:18px;margin:0;font-weight:650;letter-spacing:-.01em}
+h1 span{color:var(--muted);font-weight:400}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--chip);font-size:12px;font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.live .dot{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.demo .dot{background:var(--warn)}
+.stale .dot{background:var(--bad)}
+.meta{color:var(--muted);font-size:12px}
+.spacer{flex:1}
+button{font:inherit;font-size:12px;padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--accent)}
+main{padding:16px 20px 28px;display:grid;gap:14px;grid-template-columns:repeat(12,1fr);max-width:1400px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:600;display:flex;justify-content:space-between;gap:8px}
+.kpi{grid-column:span 2}
+.kpi .v{font-size:30px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .u{font-size:13px;color:var(--muted);font-weight:500;margin-left:3px}
+.kpi .s{font-size:12px;color:var(--muted);margin-top:4px}
+.bar{height:4px;background:var(--chip);border-radius:2px;margin-top:8px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .4s}
+.w8{grid-column:span 8}.w4{grid-column:span 4}.w6{grid-column:span 6}.w12{grid-column:span 12}
+canvas{width:100%;display:block}
+.legend{display:flex;gap:12px;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:500}
+.legend b{display:inline-block;width:10px;height:3px;border-radius:2px;vertical-align:middle;margin-right:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th{color:var(--muted);font-weight:600;font-size:12px}
+.log{max-height:228px;overflow:auto;font-size:12.5px;margin:0;padding:0;list-style:none}
+.log li{padding:5px 0;border-bottom:1px dashed var(--line);display:flex;gap:10px}
+.log time{color:var(--muted);font-variant-numeric:tabular-nums;flex:none}
+.note{font-size:11.5px;color:var(--muted);margin-top:8px}
+.empty{color:var(--muted);font-size:13px;padding:8px 0}
+.state{font-size:22px;font-weight:650}
+@media (max-width:1100px){.kpi{grid-column:span 4}.w8,.w4,.w6{grid-column:span 12}}
+@media (max-width:620px){main{padding:12px 16px}.kpi{grid-column:span 6}header{padding:12px 16px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>RuView <span>· WiFi sensing dashboard</span></h1>
+  <span id="badge" class="badge demo"><i class="dot"></i><span id="badgeText">CONNECTING</span></span>
+  <span class="meta" id="srcMeta">—</span>
+  <span class="spacer"></span>
+  <span class="meta" id="fps">0 fps</span>
+  <button id="pauseBtn">Pause</button>
+  <button id="modeBtn" title="Force demo data even when a server is reachable">Demo: auto</button>
+</header>
+
+<main>
+  <section class="card kpi"><h2>People</h2><div><span class="v" id="kPersons">–</span></div><div class="s" id="kPresence">—</div></section>
+  <section class="card kpi"><h2>Breathing</h2><div><span class="v" id="kBreath" style="color:var(--breath)">–</span><span class="u">BPM</span></div><div class="s" id="kBreathC">confidence –</div><div class="bar"><i id="bBreath" style="background:var(--breath)"></i></div></section>
+  <section class="card kpi"><h2>Heart rate</h2><div><span class="v" id="kHeart" style="color:var(--heart)">–</span><span class="u">BPM</span></div><div class="s" id="kHeartC">confidence –</div><div class="bar"><i id="bHeart" style="background:var(--heart)"></i></div></section>
+  <section class="card kpi"><h2>Motion</h2><div><span class="v" id="kMotion" style="color:var(--motion)">–</span></div><div class="s" id="kActivity">—</div><div class="bar"><i id="bMotion" style="background:var(--motion)"></i></div></section>
+  <section class="card kpi"><h2>Signal quality</h2><div><span class="v" id="kQuality">–</span></div><div class="s" id="kQualityS">aim for &gt; 0.40</div><div class="bar"><i id="bQuality"></i></div></section>
+  <section class="card kpi"><h2>Nodes</h2><div><span class="v" id="kNodes">–</span></div><div class="s" id="kSubs">— subcarriers</div></section>
+
+  <section class="card w8">
+    <h2>Vital signs — last 2 minutes <span class="legend"><span><b style="background:var(--breath)"></b>Breathing</span><span><b style="background:var(--heart)"></b>Heart</span></span></h2>
+    <canvas id="cVitals" height="220"></canvas>
+    <div class="note">Contactless estimates from CSI phase. Unvalidated — not a medical device.</div>
+  </section>
+  <section class="card w4">
+    <h2>Pose (17 keypoints) <span class="legend" id="poseInfo"></span></h2>
+    <canvas id="cPose" height="250"></canvas>
+    <div class="note">The live single-ESP32 skeleton is a demonstrator layout, not a validated pose model.</div>
+  </section>
+
+  <section class="card w8">
+    <h2>CSI amplitude waterfall <span class="legend">subcarrier ↕ · time →</span></h2>
+    <canvas id="cWaterfall" height="220"></canvas>
+  </section>
+  <section class="card w4">
+    <h2>Motion &amp; presence</h2>
+    <canvas id="cMotion" height="120"></canvas>
+    <div style="margin-top:12px"><div class="meta">Current state</div><div class="state" id="stateText">—</div></div>
+  </section>
+
+  <section class="card w6">
+    <h2>Sensor nodes</h2>
+    <table><thead><tr><th>Node</th><th>RSSI</th><th>Subcarriers</th><th>CSI fps</th><th>Mesh</th></tr></thead><tbody id="nodesBody"><tr><td colspan="5" class="empty">Waiting for data…</td></tr></tbody></table>
+  </section>
+  <section class="card w6">
+    <h2>Event log</h2>
+    <ul class="log" id="log"></ul>
+  </section>
+</main>
+
+<script>
+(() => {
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// ---------- state ----------
+const S = {
+  mode: 'connecting',      // live | demo | stale | connecting
+  forceDemo: false, paused: false,
+  persons: null, breath: null, heart: null, bConf: null, hConf: null,
+  motion: null, quality: null, activity: null, source: null, sourceState: null,
+  nodes: [], subs: 0, keypoints: null,
+  vitals: [], motionHist: [], frames: 0, lastFrame: 0,
+};
+const MAXV = 240; // ~2 min at 2 Hz sampling
+
+// ---------- log ----------
+function log(msg){
+  const li = document.createElement('li');
+  li.innerHTML = `<time>${new Date().toLocaleTimeString()}</time><span></span>`;
+  li.lastChild.textContent = msg;
+  $('log').prepend(li);
+  while ($('log').children.length > 80) $('log').lastChild.remove();
+}
+
+// ---------- ingest (defensive: field names vary across server versions) ----------
+const num = (...xs) => { for (const x of xs) if (typeof x === 'number' && isFinite(x)) return x; return null; };
+let prevPersons = null;
+function ingest(d){
+  if (!d || typeof d !== 'object') return;
+  const vs = d.vital_signs || d.vitals || (('breathing_bpm' in d || 'heart_bpm' in d) ? d : null);
+  if (vs){
+    S.breath = num(vs.breathing_bpm, vs.breathing_rate, S.breath);
+    S.heart  = num(vs.heart_bpm, vs.heart_rate, S.heart);
+    S.bConf  = num(vs.breathing_confidence, vs.confidence, S.bConf);
+    S.hConf  = num(vs.heart_confidence, vs.confidence, S.hConf);
+    S.motion = num(vs.motion_level, S.motion);
+  }
+  const f = d.features || {};
+  S.motion  = num(d.motion_level, f.motion_level, f.motion_band_power, S.motion);
+  S.quality = num(d.signal_quality, f.signal_quality, d.quality, S.quality);
+  const cls = d.classification || {};
+  S.activity = cls.motion_level || cls.activity || d.activity || S.activity;
+  const p = Array.isArray(d.persons) ? d.persons.length : num(d.estimated_persons, d.person_count, cls.person_count, cls.estimated_persons);
+  if (p != null) S.persons = p;
+  if (Array.isArray(d.persons)) S.keypoints = d.persons[0]?.keypoints?.length ? d.persons[0].keypoints : null;
+
+  let amp = null;
+  if (Array.isArray(d.nodes) && d.nodes.length){
+    S.nodes = d.nodes;
+    amp = d.nodes.find(n => Array.isArray(n.amplitude) && n.amplitude.length)?.amplitude;
+  }
+  amp = amp || d.amplitude || f.amplitude;
+  if (Array.isArray(amp) && amp.length && typeof amp[0] === 'number'){ S.subs = amp.length; pushColumn(amp); }
+
+  if (S.persons != null && prevPersons != null && S.persons !== prevPersons)
+    log(S.persons > prevPersons ? `Person entered — now ${S.persons} detected` : `Person left — now ${S.persons} detected`);
+  prevPersons = S.persons;
+  S.frames++; S.lastFrame = performance.now();
+}
+
+// ---------- live connection ----------
+let ws = null, pollTimer = null, retryTimer = null;
+async function getJSON(p){
+  const r = await fetch(p, {cache:'no-store'});
+  if (!r.ok) { const e = new Error(r.status); e.status = r.status; throw e; }
+  return r.json();
+}
+async function tryLive(){
+  clearTimeout(retryTimer);
+  if (S.forceDemo) return startDemo();
+  try {
+    const h = await getJSON('/health');
+    S.source = h.source || null;
+    stopDemo(); setMode('live');
+    log(`Connected to sensing server (source: ${h.source ?? 'unknown'})`);
+    openWS(); startPolling();
+  } catch (e) {
+    if (S.mode !== 'demo') log(e.status === 401 ? 'Server rejected request (401) — set RUVIEW_API_TOKEN before starting server.js' : 'No sensing server reachable — showing DEMO data');
+    startDemo();
+    retryTimer = setTimeout(tryLive, 8000);
+  }
+}
+function openWS(){
+  try { ws?.close(); } catch {}
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/sensing`);
+  ws.onmessage = (ev) => { if (S.paused) return; try { ingest(JSON.parse(ev.data)); } catch {} };
+  ws.onclose = () => { if (S.mode === 'live' || S.mode === 'stale'){ log('WebSocket closed — retrying'); setTimeout(() => S.mode !== 'demo' && openWS(), 3000); } };
+}
+function startPolling(){
+  clearInterval(pollTimer);
+  let tick = 0;
+  pollTimer = setInterval(async () => {
+    if (S.mode === 'demo' || S.paused) return;
+    tick++;
+    try {
+      const st = await getJSON('/api/v1/status');
+      S.sourceState = st.source_state || null; S.source = st.source || S.source;
+      if (st.source_state === 'stale' && S.mode !== 'stale'){ setMode('stale'); log('Frames stopped arriving (stale)'); }
+      else if (st.source_state && st.source_state !== 'stale' && S.mode === 'stale'){ setMode('live'); log('Frames resumed'); }
+    } catch (e) { if (e.status == null){ log('Lost connection to sensing server'); clearInterval(pollTimer); tryLive(); return; } }
+    // REST fallbacks — useful when the WS frame lacks these fields
+    getJSON('/api/v1/vital-signs').then(ingestVitalsOnly).catch(() => {});
+    if (tick % 2 === 0) getJSON('/api/v1/pose/current').then(pz => {
+      const kp = pz?.persons?.[0]?.keypoints; if (kp) S.keypoints = kp;
+      if (Array.isArray(pz?.persons)) S.persons = S.persons ?? pz.persons.length;
+    }).catch(e => { if (e.status === 403) $('poseInfo').textContent = 'privacy mode'; });
+    if (tick % 5 === 0) getJSON('/api/v1/nodes').then(n => {
+      const arr = Array.isArray(n) ? n : (n.nodes ? (Array.isArray(n.nodes) ? n.nodes : Object.entries(n.nodes).map(([id,v]) => ({node_id:id, ...v}))) : null);
+      if (arr && arr.length && !S.nodes.some(x => x.amplitude)) S.nodes = arr;
+    }).catch(() => {});
+  }, 1000);
+}
+function ingestVitalsOnly(v){
+  S.breath = num(v.breathing_bpm, S.breath); S.heart = num(v.heart_bpm, S.heart);
+  S.bConf = num(v.breathing_confidence, v.confidence, S.bConf); S.hConf = num(v.heart_confidence, v.confidence, S.hConf);
+  S.motion = num(v.motion_level, S.motion);
+}
+
+// ---------- demo generator ----------
+let demoTimer = null, t0 = performance.now(), demoPersons = 1;
+function startDemo(){
+  setMode('demo');
+  if (demoTimer) return;
+  try { ws?.close(); } catch {} clearInterval(pollTimer);
+  S.source = 'demo (in-browser simulation)'; S.sourceState = 'synthetic';
+  demoTimer = setInterval(() => {
+    if (S.paused) return;
+    const t = (performance.now() - t0) / 1000;
+    if (Math.random() < 0.003) demoPersons = Math.max(0, Math.min(3, demoPersons + (Math.random() < (demoPersons <= 1 ? .2 : .6) ? -1 : 1)));
+    const present = demoPersons > 0;
+    const walking = present && (Math.sin(t / 17) > 0.55);
+    const breathHz = 0.25 + 0.03 * Math.sin(t / 40);
+    const amp = Array.from({length:56}, (_, k) => {
+      const base = 12 + 6 * Math.sin(k / 6) + 3 * Math.cos(k / 2.3);
+      const br = present ? 1.4 * Math.sin(2 * Math.PI * breathHz * t + k / 9) : 0;
+      const mv = walking ? 4 * Math.sin(t * 3 + k / 3) * Math.random() : 0;
+      return Math.max(0, base + br + mv + (Math.random() - .5) * 1.2);
+    });
+    const motion = present ? (walking ? 0.55 + 0.25 * Math.random() : 0.08 + 0.05 * Math.random()) : 0.02 * Math.random();
+    const kp = present ? demoPose(t, walking) : [];
+    ingest({
+      type:'sensing_update',
+      nodes:[{node_id:1, rssi_dbm:-41 + Math.random()*2, amplitude:amp, subcarrier_count:56, sync:{csi_fps_ema:20, is_leader:true, is_valid:true}},
+             {node_id:2, rssi_dbm:-55 + Math.random()*2, subcarrier_count:56, sync:{csi_fps_ema:19.6, is_leader:false, is_valid:true}}],
+      persons: Array.from({length:demoPersons}, (_, i) => ({id:i, keypoints: i === 0 ? kp : []})),
+      vital_signs: present ? {
+        breathing_bpm: 60 * breathHz + (Math.random() - .5) * .6,
+        heart_bpm: 68 + 6 * Math.sin(t / 25) + (walking ? 18 : 0) + (Math.random() - .5) * 2,
+        breathing_confidence: walking ? 0.35 : 0.82, heart_confidence: walking ? 0.25 : 0.61, motion_level: motion,
+      } : {breathing_bpm:null, heart_bpm:null, breathing_confidence:0, heart_confidence:0, motion_level:motion},
+      signal_quality: 0.62 + 0.08 * Math.sin(t / 9),
+      classification: {motion_level: !present ? 'absent' : walking ? 'active' : 'present_still'},
+    });
+    if (!present){ S.breath = null; S.heart = null; }
+  }, 50);
+}
+function stopDemo(){ clearInterval(demoTimer); demoTimer = null; }
+function demoPose(t, walking){
+  const sway = Math.sin(t * 1.3) * 0.015, step = walking ? Math.sin(t * 5) * 0.06 : 0;
+  const P = [[.5,.14],[.52,.12],[.48,.12],[.54,.13],[.46,.13],[.58,.25],[.42,.25],[.62,.38+step/2],[.38,.38-step/2],[.63,.5+step],[.37,.5-step],[.56,.52],[.44,.52],[.57+step,.7],[.43-step,.7],[.57+step*1.4,.88],[.43-step*1.4,.88]];
+  return P.map(([x,y]) => ({x:x+sway, y, confidence:.6 + Math.random()*.3}));
+}
+
+// ---------- mode / controls ----------
+function setMode(m){
+  S.mode = m;
+  $('badge').className = 'badge ' + (m === 'live' ? 'live' : m === 'stale' ? 'stale' : 'demo');
+  $('badgeText').textContent = {live:'LIVE', demo:'DEMO', stale:'STALE', connecting:'CONNECTING'}[m];
+}
+$('pauseBtn').onclick = () => { S.paused = !S.paused; $('pauseBtn').textContent = S.paused ? 'Resume' : 'Pause'; };
+$('modeBtn').onclick = () => {
+  S.forceDemo = !S.forceDemo;
+  $('modeBtn').textContent = S.forceDemo ? 'Demo: forced' : 'Demo: auto';
+  log(S.forceDemo ? 'Demo data forced on' : 'Looking for a live sensing server…');
+  if (S.forceDemo) startDemo(); else tryLive();
+};
+
+// ---------- canvases ----------
+function fit(c){
+  if (!c.dataset.h) c.dataset.h = c.getAttribute('height');
+  const r = devicePixelRatio || 1, w = c.clientWidth, h = +c.dataset.h;
+  if (c.width !== Math.round(w * r) || c.height !== Math.round(h * r)){ c.width = Math.round(w * r); c.height = Math.round(h * r); c.style.height = h + 'px'; }
+  const g = c.getContext('2d'); g.setTransform(r,0,0,r,0,0); return [g, w, h];
+}
+
+// waterfall: offscreen buffer, one column per frame
+const wf = document.createElement('canvas'); wf.width = 600; wf.height = 64;
+const wfg = wf.getContext('2d');
+let ampLo = Infinity, ampHi = -Infinity;
+const STOPS = [[20,30,70],[40,90,170],[30,170,160],[240,220,90]];
+function ramp(v){
+  v = Math.max(0, Math.min(1, v)) * (STOPS.length - 1);
+  const i = Math.min(STOPS.length - 2, Math.floor(v)), f = v - i, a = STOPS[i], b = STOPS[i+1];
+  return `rgb(${a[0]+(b[0]-a[0])*f|0},${a[1]+(b[1]-a[1])*f|0},${a[2]+(b[2]-a[2])*f|0})`;
+}
+function pushColumn(amp){
+  const lo = Math.min(...amp), hi = Math.max(...amp);
+  ampLo = Math.min(lo, ampLo * 0.995 + lo * 0.005); ampHi = Math.max(hi, ampHi * 0.995 + hi * 0.005);
+  if (wf.height !== amp.length) { wf.height = amp.length; }
+  wfg.drawImage(wf, -1, 0);
+  const span = (ampHi - ampLo) || 1;
+  for (let k = 0; k < amp.length; k++){ wfg.fillStyle = ramp((amp[k] - ampLo) / span); wfg.fillRect(wf.width - 1, amp.length - 1 - k, 1, 1); }
+}
+function drawWaterfall(){
+  const [g, w, h] = fit($('cWaterfall'));
+  g.imageSmoothingEnabled = false;
+  g.clearRect(0,0,w,h);
+  g.drawImage(wf, 0, 0, w, h);
+  g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '11px system-ui';
+  g.fillText(`${S.subs || '–'} subcarriers`, 8, 16);
+}
+
+function line(g, data, key, x0, w, y0, h, lo, hi, color){
+  g.strokeStyle = color; g.lineWidth = 2; g.lineJoin = 'round'; g.beginPath();
+  let started = false;
+  data.forEach((d, i) => {
+    const v = d[key]; if (v == null){ started = false; return; }
+    const x = x0 + (i / (MAXV - 1)) * w, y = y0 + h - ((v - lo) / (hi - lo)) * h;
+    started ? g.lineTo(x, y) : g.moveTo(x, y); started = true;
+  });
+  g.stroke();
+}
+function band(g, label, data, key, lo, hi, color, x0, y0, w, h){
+  g.strokeStyle = css('--line'); g.lineWidth = 1; g.fillStyle = css('--muted'); g.font = '11px system-ui';
+  [lo, (lo+hi)/2, hi].forEach(v => { const y = y0 + h - ((v-lo)/(hi-lo))*h; g.beginPath(); g.moveTo(x0, y); g.lineTo(x0+w, y); g.stroke(); g.fillText(v, 2, y + 4); });
+  g.fillText(label, x0 + 4, y0 + 12);
+  line(g, data, key, x0, w, y0, h, lo, hi, color);
+}
+function drawVitals(){
+  const [g, w, h] = fit($('cVitals')); g.clearRect(0,0,w,h);
+  const x0 = 30, cw = w - x0 - 4, half = (h - 16) / 2;
+  band(g, 'Breathing (BPM)', S.vitals, 'b', 0, 40, css('--breath'), x0, 4, cw, half - 6);
+  band(g, 'Heart (BPM)', S.vitals, 'h', 40, 140, css('--heart'), x0, half + 14, cw, half - 6);
+}
+function drawMotion(){
+  const [g, w, h] = fit($('cMotion')); g.clearRect(0,0,w,h);
+  g.strokeStyle = css('--line'); g.beginPath(); g.moveTo(0, h-1); g.lineTo(w, h-1); g.stroke();
+  const n = S.motionHist.length, bw = w / MAXV;
+  S.motionHist.forEach((m, i) => {
+    const x = (MAXV - n + i) * bw;
+    g.fillStyle = m.p ? css('--person') : css('--line');
+    g.globalAlpha = m.p ? 0.18 : 0.5; g.fillRect(x, 0, Math.ceil(bw), h);
+    g.globalAlpha = 1; g.fillStyle = css('--motion');
+    const mh = Math.min(1, m.m ?? 0) * (h - 4); g.fillRect(x, h - mh, Math.max(1, bw - .5), mh);
+  });
+}
+const EDGES = [[0,1],[0,2],[1,3],[2,4],[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
+function drawPose(){
+  const [g, w, h] = fit($('cPose')); g.clearRect(0,0,w,h);
+  const kp = S.keypoints;
+  if (!kp || kp.length < 17){ g.fillStyle = css('--muted'); g.font = '13px system-ui'; g.textAlign = 'center'; g.fillText(S.persons === 0 ? 'No one detected' : 'No pose data', w/2, h/2); g.textAlign = 'left'; return; }
+  let mx = 0; kp.forEach(p => { mx = Math.max(mx, Math.abs(p.x), Math.abs(p.y)); });
+  const sc = mx > 1.5 ? 1 / mx : 1, size = Math.min(w, h) - 16, ox = (w - size) / 2, oy = 8;
+  const P = kp.map(p => [ox + p.x * sc * size, oy + p.y * sc * size, p.confidence ?? 1]);
+  g.lineWidth = 3; g.lineCap = 'round';
+  EDGES.forEach(([a, b]) => { g.strokeStyle = css('--accent'); g.globalAlpha = Math.min(P[a][2], P[b][2]) * .9 + .1; g.beginPath(); g.moveTo(P[a][0], P[a][1]); g.lineTo(P[b][0], P[b][1]); g.stroke(); });
+  g.globalAlpha = 1;
+  P.forEach(([x, y, c]) => { g.fillStyle = css('--panel'); g.strokeStyle = css('--accent'); g.lineWidth = 2; g.beginPath(); g.arc(x, y, 3.5, 0, 7); g.fill(); g.stroke(); });
+  const avg = kp.reduce((s, p) => s + (p.confidence ?? 0), 0) / kp.length;
+  $('poseInfo').textContent = `avg conf ${avg.toFixed(2)}`;
+}
+
+// ---------- DOM updates ----------
+const fmt = (v, d = 1) => v == null ? '–' : v.toFixed(d);
+const pct = (el, v) => { $(el).style.width = (v == null ? 0 : Math.max(0, Math.min(1, v)) * 100) + '%'; };
+let lastState = null, fpsFrames = 0, fpsT = performance.now();
+function updateDOM(){
+  $('kPersons').textContent = S.persons ?? '–';
+  $('kPresence').textContent = S.persons == null ? '—' : S.persons > 0 ? 'room occupied' : 'room empty';
+  $('kBreath').textContent = fmt(S.breath); $('kBreathC').textContent = `confidence ${fmt(S.bConf, 2)}`; pct('bBreath', S.bConf);
+  $('kHeart').textContent = fmt(S.heart, 0); $('kHeartC').textContent = `confidence ${fmt(S.hConf, 2)}`; pct('bHeart', S.hConf);
+  $('kMotion').textContent = fmt(S.motion, 2); pct('bMotion', S.motion);
+  $('kActivity').textContent = S.activity ? String(S.activity).replace(/_/g, ' ') : '—';
+  $('kQuality').textContent = fmt(S.quality, 2); pct('bQuality', S.quality);
+  $('kQuality').style.color = S.quality == null ? '' : S.quality > .4 ? css('--ok') : css('--warn');
+  $('kNodes').textContent = S.nodes.length || '–'; $('kSubs').textContent = `${S.subs || '—'} subcarriers`;
+  $('srcMeta').textContent = [S.source && `source: ${S.source}`, S.sourceState && `state: ${S.sourceState}`].filter(Boolean).join(' · ') || '—';
+
+  const st = S.persons == null ? '—' : S.persons === 0 ? 'Empty' : (S.motion ?? 0) > 0.3 ? 'Moving' : 'Present, still';
+  $('stateText').textContent = st;
+  if (lastState && st !== lastState && st !== '—') log(`State: ${lastState} → ${st}`);
+  lastState = st;
+
+  $('nodesBody').innerHTML = S.nodes.length ? S.nodes.map(n => {
+    const s = n.sync || {};
+    const mesh = n.sync ? (s.is_leader ? 'leader' : s.is_valid ? 'synced' : 'unsynced') : '—';
+    return `<tr><td>${esc(n.node_id ?? n.id ?? '?')}</td><td>${n.rssi_dbm != null ? n.rssi_dbm.toFixed(0) + ' dBm' : '—'}</td><td>${n.subcarrier_count ?? n.amplitude?.length ?? '—'}</td><td>${s.csi_fps_ema != null ? s.csi_fps_ema.toFixed(1) : '—'}</td><td>${mesh}</td></tr>`;
+  }).join('') : '<tr><td colspan="5" class="empty">No nodes reported</td></tr>';
+
+  const now = performance.now();
+  if (now - fpsT > 1000){ $('fps').textContent = `${Math.round((S.frames - fpsFrames) * 1000 / (now - fpsT))} fps`; fpsFrames = S.frames; fpsT = now; }
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// sample history at 2 Hz
+setInterval(() => {
+  if (S.paused) return;
+  S.vitals.push({b:S.breath, h:S.heart}); if (S.vitals.length > MAXV) S.vitals.shift();
+  S.motionHist.push({m:S.motion, p:(S.persons ?? 0) > 0}); if (S.motionHist.length > MAXV) S.motionHist.shift();
+}, 500);
+setInterval(updateDOM, 250);
+(function frame(){ drawWaterfall(); drawVitals(); drawMotion(); drawPose(); requestAnimationFrame(frame); })();
+
+// boot: when opened as a plain file there is no proxy, so go straight to demo
+if (location.protocol === 'file:'){ log('Opened as a file — run "node server.js" for live data. Showing DEMO.'); startDemo(); }
+else tryLive();
+})();
+</script>
+</body>
+</html>
