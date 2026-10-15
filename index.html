@@ -85,6 +85,10 @@ body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
 .fstate{font-size:22px;font-weight:650;color:var(--field)}
 .flabel{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--field);border:1px solid var(--field);border-radius:999px;padding:2px 8px}
 @media (max-width:800px){.fieldwrap{grid-template-columns:1fr}}
+.floors{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center}
+.floors button{border-radius:999px;padding:5px 12px;font-weight:600;position:relative}
+.floors button.on{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.floors button.here::after{content:'';position:absolute;top:-2px;right:-2px;width:9px;height:9px;border-radius:50%;background:var(--person);box-shadow:0 0 0 2px var(--panel)}
 @media (max-width:1100px){.kpi{grid-column:span 4}.w8,.w4,.w6{grid-column:span 12}}
 @media (max-width:620px){main{padding:12px 16px}.kpi{grid-column:span 6}header{padding:12px 16px}}
 </style>
@@ -125,7 +129,8 @@ body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
 
   <h4><span class="n">4</span>Draw your place (one time)</h4>
   <ol>
-    <li>Click <b>Clear</b> to remove the sample house.</li>
+    <li>Pick a floor tab. Use <b>+ Floor</b> to add another, and double-click a tab (or use <b>Rename floor</b>) to name it.</li>
+    <li>Click <b>Clear floor</b> to remove that floor's sample rooms.</li>
     <li>Set <b>W</b> and <b>H</b> to your home's size in meters (1 square = 1 m).</li>
     <li>Click <b>+ Room</b>, drag a box, and type a name. Repeat for each room.</li>
     <li>Click <b>+ Router</b> and click where your router is. Do the same with <b>+ Laptop</b>.</li>
@@ -177,6 +182,7 @@ body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
 
   <section class="card w8">
     <h2>My place <span class="legend" id="placeHint">drag to move · double-click a room to rename</span></h2>
+    <div class="floors" id="floorTabs"></div>
     <div class="toolbar" id="toolbar">
       <button data-mode="select" class="on">Move</button>
       <button data-mode="room">+ Room</button>
@@ -188,12 +194,15 @@ body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
       <label>W <input id="planW" type="number" min="3" max="60" step="1"> m</label>
       <label>H <input id="planH" type="number" min="3" max="60" step="1"> m</label>
       <span class="sep"></span>
+      <button id="floorRename">Rename floor</button>
+      <button id="floorDelete">Delete floor</button>
+      <span class="sep"></span>
       <button id="planSample">Sample</button>
-      <button id="planClear">Clear</button>
+      <button id="planClear">Clear floor</button>
     </div>
     <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="locline" id="locText">—</div>
-    <div class="note">Draw your rooms (1 grid square = 1 m) and place your router, laptop and any ESP32 nodes where they really are. Saved in this browser.</div>
+    <div class="note">Pick a floor tab, draw its rooms (1 grid square = 1 m), and place your router, laptop and any ESP32 nodes where they really are. A purple dot on a tab means someone was detected on that floor. Saved in this browser.</div>
   </section>
   <section class="card w4">
     <h2>Health checklist <span class="score" id="healthScore"></span></h2>
@@ -399,9 +408,9 @@ function startDemo(){
     const motion = present ? (walking ? 0.55 + 0.25 * Math.random() : 0.08 + 0.05 * Math.random()) : 0.02 * Math.random();
     const kp = present ? demoPose(t, walking) : [];
     const who = demoWalk(walking, present);
-    const demoNodes = [1, 2, 3].map((id, i) => {
-      const dev = plan.devices.find(d => d.type === 'node' && String(d.nid) === String(id));
-      const prox = (dev && who) ? Math.exp(-Math.hypot(dev.x - who.x, dev.y - who.y) / 2.2) : 0;
+    const demoNodes = [1, 2, 3, 4].map((id, i) => {
+      const dev = allDevices().find(d => d.type === 'node' && String(d.nid) === String(id));
+      const prox = (dev && who) ? Math.exp(-(Math.hypot(dev.x - who.x, dev.y - who.y) + (dev.floor === who.f ? 0 : 6)) / 2.2) : 0;
       const a = amp.map((v, k) => Math.max(0, v + (walking ? prox * 6 * (Math.random() - .5) : prox * 0.6 * Math.sin(t * 1.6 + k))));
       return {node_id:id, rssi_dbm:-40 - i * 7 + Math.random() * 2, amplitude:a, subcarrier_count:56, sync:{csi_fps_ema:20 - i * .3, is_leader:i === 0, is_valid:true}};
     });
@@ -630,9 +639,23 @@ function nodeEnergy(n){
 }
 
 // ---------- floor plan ----------
-const PLAN_KEY = 'ruview.plan.v1';
-function samplePlan(){
-  return {w:12, h:9, sample:true, rooms:[
+const HOME_KEY = 'ruview.home.v2', OLD_PLAN_KEY = 'ruview.plan.v1';
+function sampleHome(){
+  return {sample:true, active:0, floors:[sampleGround(), sampleUpstairs()]};
+}
+function sampleUpstairs(){
+  return {id:'f2', name:'Upstairs', w:12, h:9, rooms:[
+    {id:'u1', name:'Main bedroom', x:0, y:0, w:7, h:5},
+    {id:'u2', name:'Bedroom 2', x:7, y:0, w:5, h:5},
+    {id:'u3', name:'Hall + stairs', x:0, y:5, w:6, h:4},
+    {id:'u4', name:'Bathroom', x:6, y:5, w:3, h:4},
+    {id:'u5', name:'Closet', x:9, y:5, w:3, h:4},
+  ], devices:[
+    {id:'u6', type:'node', nid:4, x:3.5, y:2.5},
+  ]};
+}
+function sampleGround(){
+  return {id:'f1', name:'Ground floor', w:12, h:9, rooms:[
     {id:'r1', name:'Living room', x:0, y:0, w:7, h:5},
     {id:'r2', name:'Kitchen', x:7, y:0, w:5, h:5},
     {id:'r3', name:'Bedroom', x:0, y:5, w:6, h:4},
@@ -646,10 +669,47 @@ function samplePlan(){
     {id:'d5', type:'node', nid:3, x:3, y:8},
   ]};
 }
-let plan;
-try { plan = JSON.parse(localStorage.getItem(PLAN_KEY)); } catch {}
-if (!plan || !Array.isArray(plan.rooms)) plan = samplePlan();
-const savePlan = () => { try { localStorage.setItem(PLAN_KEY, JSON.stringify(plan)); } catch {} };
+let home = null, plan;
+try { home = JSON.parse(localStorage.getItem(HOME_KEY)); } catch {}
+if (!home || !Array.isArray(home.floors) || !home.floors.length){
+  // migrate a single-floor plan saved by an earlier version
+  let old = null; try { old = JSON.parse(localStorage.getItem(OLD_PLAN_KEY)); } catch {}
+  home = old && Array.isArray(old.rooms)
+    ? {sample:!!old.sample, active:0, floors:[{id:'f1', name:'Ground floor', w:old.w, h:old.h, rooms:old.rooms, devices:old.devices || []}]}
+    : sampleHome();
+}
+home.active = Math.min(home.active || 0, home.floors.length - 1);
+plan = home.floors[home.active];
+// every edit goes through savePlan; editing anything marks the home as yours (no longer the sample)
+const savePlan = () => { if (plan.sample === false){ home.sample = false; delete plan.sample; } try { localStorage.setItem(HOME_KEY, JSON.stringify(home)); } catch {} };
+const allDevices = () => home.floors.flatMap((f, fi) => f.devices.map(d => ({...d, floor:fi})));
+function setFloor(i){ home.active = i; plan = home.floors[i]; drag = null; draft = null; savePlan(); renderFloorTabs(); renderPlan(); }
+let hereFloor = null;
+function renderFloorTabs(){
+  const box = $('floorTabs'); box.innerHTML = '';
+  home.floors.forEach((f, i) => {
+    const b = document.createElement('button');
+    b.textContent = f.name; b.title = 'Double-click to rename';
+    b.className = (i === home.active ? 'on' : '') + (i === hereFloor ? ' here' : '');
+    b.onclick = () => setFloor(i);
+    b.ondblclick = () => renameFloor(i);
+    box.appendChild(b);
+  });
+  const add = document.createElement('button');
+  add.textContent = '+ Floor';
+  add.onclick = () => {
+    const name = prompt('Name for the new floor:', home.floors.length === 1 ? 'Upstairs' : `Floor ${home.floors.length + 1}`);
+    if (name == null) return;
+    home.floors.push({id:uid(), name:name.trim() || `Floor ${home.floors.length + 1}`, w:plan.w, h:plan.h, rooms:[], devices:[]});
+    plan.sample = false; setFloor(home.floors.length - 1);
+  };
+  box.appendChild(add);
+  $('floorDelete').disabled = home.floors.length < 2;
+}
+function renameFloor(i){
+  const name = prompt('Rename floor:', home.floors[i].name);
+  if (name != null && name.trim()){ home.floors[i].name = name.trim(); plan.sample = false; savePlan(); renderFloorTabs(); }
+}
 const uid = () => Math.random().toString(36).slice(2, 9);
 const snap = (v) => Math.round(v * 2) / 2;
 const NS = 'http://www.w3.org/2000/svg';
@@ -658,7 +718,7 @@ let mode = 'select', drag = null, draft = null;
 
 function el(tag, attrs, parent){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; }
 function svgPoint(ev){ const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; const q = p.matrixTransform(svg.getScreenCTM().inverse()); return {x:Math.max(0, Math.min(plan.w, q.x)), y:Math.max(0, Math.min(plan.h, q.y))}; }
-const roomAt = (x, y) => [...plan.rooms].reverse().find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+const roomAt = (x, y, fl = plan) => [...fl.rooms].reverse().find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
 
 let gStatic, gOverlay;
 function renderPlan(){
@@ -703,7 +763,7 @@ svg.addEventListener('pointerdown', (ev) => {
   if (mode === 'router' || mode === 'laptop' || mode === 'node'){
     const dev = {id:uid(), type:mode, x:snap(p.x), y:snap(p.y)};
     if (mode === 'node'){
-      const used = plan.devices.filter(d => d.type === 'node').map(d => +d.nid);
+      const used = allDevices().filter(d => d.type === 'node').map(d => +d.nid);
       const ans = prompt('ESP32 node ID (the node_id the sensing server reports):', String(used.length ? Math.max(...used) + 1 : 1));
       if (ans == null || ans.trim() === '') return;
       dev.nid = ans.trim();
@@ -752,8 +812,14 @@ function setPlanMode(m){
   renderPlan();
 }
 document.querySelectorAll('#toolbar [data-mode]').forEach(b => b.onclick = () => setPlanMode(b.dataset.mode));
-$('planSample').onclick = () => { if (confirm('Replace your floor plan with the sample?')){ plan = samplePlan(); savePlan(); renderPlan(); } };
-$('planClear').onclick = () => { if (confirm('Clear all rooms and devices?')){ plan = {w:plan.w, h:plan.h, rooms:[], devices:[]}; savePlan(); renderPlan(); } };
+$('planSample').onclick = () => { if (confirm('Replace ALL your floors with the two-floor sample?')){ home = sampleHome(); setFloor(0); } };
+$('planClear').onclick = () => { if (confirm(`Clear all rooms and devices on "${plan.name}"?`)){ plan.rooms = []; plan.devices = []; plan.sample = false; savePlan(); renderPlan(); } };
+$('floorRename').onclick = () => renameFloor(home.active);
+$('floorDelete').onclick = () => {
+  if (home.floors.length < 2) return;
+  if (!confirm(`Delete "${plan.name}" and everything on it?`)) return;
+  home.floors.splice(home.active, 1); home.sample = false; setFloor(Math.max(0, home.active - 1));
+};
 ['planW', 'planH'].forEach(id => $(id).onchange = () => {
   const v = Math.max(3, Math.min(60, Math.round(+$(id).value || 0)));
   plan[id === 'planW' ? 'w' : 'h'] = v; plan.sample = false; savePlan(); renderPlan();
@@ -764,26 +830,32 @@ const FRESH = 3000;
 function locate(){
   if (S.persons === 0) return {kind:'empty'};
   const now = performance.now();
-  const placed = plan.devices.filter(d => d.type === 'node' && S.nodeScore[d.nid] && now - S.nodeScore[d.nid].t < FRESH)
-    .map(d => ({d, s:S.nodeScore[d.nid].score}));
+  // pick the floor whose placed nodes see the most movement, then locate within that floor
+  let best = null;
+  home.floors.forEach((fl, fi) => {
+    const ps = fl.devices.filter(d => d.type === 'node' && S.nodeScore[d.nid] && now - S.nodeScore[d.nid].t < FRESH).map(d => ({d, s:S.nodeScore[d.nid].score}));
+    const e = ps.reduce((a, n) => a + n.s * n.s, 0);
+    if (ps.length && (!best || e > best.e || (e === best.e && ps.length > best.ps.length))) best = {fi, ps, e};
+  });
+  const placed = best ? best.ps : [], floor = best ? best.fi : null;
   if (placed.length >= 3){
     const tot = placed.reduce((a, n) => a + n.s * n.s, 0);
     if (tot < 0.02){
       if (S.lastFix && now - S.lastFix.t < 30000) return {kind:'last', ...S.lastFix};
-      return {kind:'still', n:placed.length};
+      return {kind:'still', n:placed.length, floor};
     }
     let x = 0, y = 0; placed.forEach(n => { x += n.d.x * n.s * n.s; y += n.d.y * n.s * n.s; }); x /= tot; y /= tot;
-    const prev = S.lastFix && now - S.lastFix.t < 3000 ? S.lastFix : null;
+    const prev = S.lastFix && now - S.lastFix.t < 3000 && S.lastFix.floor === floor ? S.lastFix : null;
     if (prev){ x = prev.x * 0.85 + x * 0.15; y = prev.y * 0.85 + y * 0.15; }
-    S.lastFix = {x, y, t:now};
-    return {kind:'point', x, y};
+    S.lastFix = {x, y, t:now, floor};
+    return {kind:'point', x, y, floor};
   }
   if (placed.length >= 1){
-    const best = placed.sort((a, b) => b.s - a.s)[0];
-    return {kind:'near', dev:best.d, n:placed.length};
+    const top = placed.sort((a, b) => b.s - a.s)[0];
+    return {kind:'near', dev:top.d, n:placed.length, floor};
   }
-  const laptop = plan.devices.find(d => d.type === 'laptop');
-  if (S.persons > 0 && laptop) return {kind:'range', dev:laptop};
+  const laptop = allDevices().find(d => d.type === 'laptop');
+  if (S.persons > 0 && laptop) return {kind:'range', dev:laptop, floor:laptop.floor};
   return {kind:'none'};
 }
 let lastRoom = null;
@@ -810,25 +882,34 @@ function renderOverlay(){
       const c = el('text', {x:0.3, y:-0.52, 'text-anchor':'middle', 'font-size':0.26, 'font-weight':700, fill:'#fff'}, g); c.textContent = S.persons;
     }
   };
-  if (L.kind === 'point' || L.kind === 'last'){
+  const onFloor = L.floor == null || L.floor === home.active;
+  const fl = L.floor != null ? home.floors[L.floor] : plan, flName = fl ? fl.name : '';
+  const multi = home.floors.length > 1;
+  if (hereFloor !== (L.floor ?? null)){ hereFloor = L.floor ?? null; renderFloorTabs(); }
+  if (!onFloor && (L.kind === 'point' || L.kind === 'last' || L.kind === 'near' || L.kind === 'range')){
+    room = L.kind === 'near' || L.kind === 'range' ? roomAt(L.dev.x, L.dev.y, fl) : roomAt(L.x, L.y, fl);
+    text = L.kind === 'range' ? `Someone is within range of the laptop on ${flName}` : `Detected on ${flName}${room ? ` · ${room.name}` : ''}`;
+    sub = `Click the "${flName}" tab to see them.`;
+  } else if (L.kind === 'point' || L.kind === 'last'){
     room = roomAt(L.x, L.y); hiRoom(room);
     el('circle', {cx:L.x, cy:L.y, r:1.5, fill:person, opacity:0.12, stroke:person, 'stroke-width':0.05, 'stroke-dasharray':'0.15 0.1'}, gOverlay);
     figure(L.x, L.y, {opacity:L.kind === 'last' ? 0.5 : 1, label:L.kind === 'last' ? 'last seen' : 'You'});
-    text = L.kind === 'point' ? `You're in the ${room ? room.name : 'space between rooms'}` : `Last seen in the ${room ? room.name : 'space between rooms'}`;
+    const where = `${room ? room.name : 'space between rooms'}${multi ? ` (${flName})` : ''}`;
+    text = L.kind === 'point' ? `You're in the ${where}` : `Last seen in the ${where}`;
     sub = L.kind === 'point' ? 'Rough estimate from which nodes see the most movement · accuracy about ±1.5 m'
                              : 'Holding still — position held from the last movement';
   } else if (L.kind === 'near'){
     room = roomAt(L.dev.x, L.dev.y); hiRoom(room);
     el('circle', {cx:L.dev.x, cy:L.dev.y, r:0.6, fill:'none', stroke:person, 'stroke-width':0.08}, gOverlay);
     figure(Math.min(plan.w - 0.4, L.dev.x + 0.8), L.dev.y + 0.4, {label:'near here'});
-    text = `Activity is strongest near Node ${L.dev.nid}${room ? ` (${room.name})` : ''}`;
+    text = `Activity is strongest near Node ${L.dev.nid}${room ? ` (${room.name}${multi ? `, ${flName}` : ''})` : multi ? ` (${flName})` : ''}`;
     sub = `Room-level only — ${L.n} node${L.n > 1 ? 's' : ''} placed. Place 3+ nodes around your home to pinpoint a position.`;
   } else if (L.kind === 'range'){
     el('circle', {cx:L.dev.x, cy:L.dev.y, r:5, fill:person, opacity:0.1, stroke:person, 'stroke-width':0.05, 'stroke-dasharray':'0.2 0.12'}, gOverlay);
     const fx = L.dev.x + (L.dev.x + 1.5 < plan.w ? 1.3 : -1.3);
     figure(fx, L.dev.y + 0.3, {opacity:0.75, label:'somewhere in this circle'});
     text = 'Someone is within range of the laptop';
-    sub = 'Laptop WiFi can tell someone is nearby (≈5 m), not where. Exact position needs 3+ ESP32 nodes.';
+    sub = `Laptop WiFi can tell someone is nearby (≈5 m), not where${multi ? ', or which floor' : ''}. Exact position needs 3+ ESP32 nodes${multi ? ' (and 1+ per floor to tell floors apart)' : ''}.`;
   } else if (L.kind === 'still'){
     text = 'Someone is here, holding still'; sub = 'Position is found from movement — move around briefly to get a fix.';
   } else if (L.kind === 'empty'){
@@ -837,7 +918,7 @@ function renderOverlay(){
     text = 'Location unavailable'; sub = 'Place your laptop or ESP32 nodes on the plan.';
   }
   $('locText').innerHTML = ''; $('locText').append(text); const sm = document.createElement('small'); sm.textContent = sub; $('locText').append(sm);
-  const rn = room?.name || null;
+  const rn = room ? (multi ? `${room.name} (${flName})` : room.name) : null;
   if (rn && rn !== lastRoom && (L.kind === 'point' || L.kind === 'near')) log(`Location: ${rn}`);
   if (rn) lastRoom = rn;
 }
@@ -845,11 +926,12 @@ function renderOverlay(){
 // demo walker: moves between room centres while "walking"
 let walker = null;
 function demoWalk(walking, present){
-  if (!present || !plan.rooms.length) return null;
-  const centre = (r) => ({x:r.x + r.w / 2, y:r.y + r.h / 2});
-  if (!walker){ walker = {...centre(plan.rooms[0]), tgt:null}; }
+  const rooms = home.floors.flatMap((f, fi) => f.rooms.map(r => ({...r, f:fi})));
+  if (!present || !rooms.length) return null;
+  const centre = (r) => ({x:r.x + r.w / 2, y:r.y + r.h / 2, f:r.f});
+  if (!walker){ walker = {...centre(rooms[0]), tgt:null}; }
   if (walking){
-    if (!walker.tgt) walker.tgt = centre(plan.rooms[Math.floor(Math.random() * plan.rooms.length)]);
+    if (!walker.tgt){ walker.tgt = centre(rooms[Math.floor(Math.random() * rooms.length)]); walker.f = walker.tgt.f; }
     const dx = walker.tgt.x - walker.x, dy = walker.tgt.y - walker.y, d = Math.hypot(dx, dy), stepLen = 1.1 * 0.05;
     if (d < stepLen) walker.tgt = null; else { walker.x += dx / d * stepLen; walker.y += dy / d * stepLen; }
   }
@@ -868,7 +950,7 @@ function checks(){
   const rssiOnly = live && /wifi/.test(src) && !csi;
   const now = performance.now(), age = live ? (S.frameAgeMs ?? (S.lastFrame ? now - S.lastFrame : null)) : null;
   const w = S.wifi;
-  const placedNodes = plan.devices.filter(d => d.type === 'node');
+  const devs = allDevices(), placedNodes = devs.filter(d => d.type === 'node');
   const reporting = Object.keys(S.nodeScore).filter(id => now - S.nodeScore[id].t < FRESH);
   const placedReporting = placedNodes.filter(d => reporting.includes(String(d.nid)));
   const C = [];
@@ -907,11 +989,12 @@ function checks(){
   else add(S.persons ? (vOk ? 'ok' : 'warn') : 'na', 'Breathing / heart readings',
       !S.persons ? 'Needs someone in the room.' : vOk ? `Breathing confidence ${S.bConf.toFixed(2)}` : 'Low confidence — sit still within 1–2 m of the sensor for 30 s.');
 
-  const userRooms = plan.rooms.length && !plan.sample;
+  const nRooms = home.floors.reduce((a, f) => a + f.rooms.length, 0), nFl = home.floors.length;
+  const userRooms = nRooms && !home.sample;
   add(userRooms ? 'ok' : 'warn', 'Floor plan of your place',
-      userRooms ? `${plan.rooms.length} room${plan.rooms.length > 1 ? 's' : ''}, ${plan.w} × ${plan.h} m` : plan.rooms.length ? 'Using the sample plan — draw your own rooms below.' : 'No rooms yet — use "+ Room".');
+      userRooms ? `${nFl} floor${nFl > 1 ? 's' : ''}, ${nRooms} room${nRooms > 1 ? 's' : ''}` : nRooms ? 'Using the sample plan — draw your own rooms below.' : 'No rooms yet — use "+ Room".');
 
-  const hasRouter = plan.devices.some(d => d.type === 'router'), hasLaptop = plan.devices.some(d => d.type === 'laptop');
+  const hasRouter = devs.some(d => d.type === 'router'), hasLaptop = devs.some(d => d.type === 'laptop');
   const unplaced = reporting.filter(id => !placedNodes.some(d => String(d.nid) === id));
   add(hasRouter && (hasLaptop || placedNodes.length) && !unplaced.length ? 'ok' : 'warn', 'Router and sensors placed on plan',
       unplaced.length ? `Node ${unplaced.join(', ')} is reporting but not on the plan — add it with "+ ESP32 node".`
@@ -980,7 +1063,7 @@ setInterval(() => {
 }, 500);
 setInterval(updateDOM, 250);
 setInterval(renderChecks, 1000);
-renderPlan(); pollWifi(); setInterval(pollWifi, 10000);
+renderFloorTabs(); renderPlan(); pollWifi(); setInterval(pollWifi, 10000);
 let lastOv = 0;
 (function frame(){ const nowF = performance.now(); if (nowF - lastOv > 33){ renderOverlay(); lastOv = nowF; } drawField(); drawWaterfall(); drawVitals(); drawMotion(); drawPose(); requestAnimationFrame(frame); })();
 

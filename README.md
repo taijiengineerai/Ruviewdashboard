@@ -5,7 +5,7 @@ A local dashboard for the [RuView](https://github.com/ruvnet/RuView) sensing ser
 It also has:
 
 - **Health checklist.** Shows whether the dashboard is running, whether your laptop is on WiFi (network name and signal, read with `netsh`), whether the sensing server is reachable and frames are arriving, signal quality, presence, vitals, floor-plan setup, and whether locating you is possible.
-- **My place.** Draw your rooms on a 1 m grid, then place your router, laptop and ESP32 nodes. The plan is saved in your browser. Depending on what you have, it shows:
+- **My place.** Add one tab per floor (for example Ground floor and Upstairs). Draw each floor's rooms on a 1 m grid, then place your router, laptop and ESP32 nodes. The plan is saved in your browser. Depending on what you have, it shows:
   - **3+ ESP32 nodes:** a rough position, about ±1.5 m, worked out from which nodes see the most movement. The room you're in is highlighted.
   - **1–2 nodes:** the room nearest the strongest activity.
   - **Laptop WiFi only:** a ~5 m "someone is nearby" circle. RSSI can't tell where you are.
