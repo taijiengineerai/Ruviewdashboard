@@ -68,6 +68,19 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 .checks b{font-weight:600;font-size:13px}
 .checks span.d{grid-column:2;font-size:12px;color:var(--muted)}
 .score{font-size:12px;font-weight:700;color:var(--ink);text-transform:none;letter-spacing:0}
+.help-scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;display:none}
+.help{position:fixed;top:0;right:0;bottom:0;width:min(520px,100%);background:var(--panel);border-left:1px solid var(--line);z-index:21;overflow:auto;padding:20px 22px 40px;transform:translateX(100%);transition:transform .25s}
+body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
+.help h3{margin:0 0 4px;font-size:18px}
+.help h4{margin:20px 0 6px;font-size:14px;display:flex;gap:8px;align-items:center}
+.help h4 .n{width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:12px;flex:none}
+.help p,.help li{font-size:13px;color:var(--ink);margin:4px 0}
+.help ul,.help ol{padding-left:20px;margin:4px 0}
+.help .why{font-size:12.5px;color:var(--muted);border-left:3px solid var(--accent);padding:4px 10px;margin:8px 0;background:var(--chip);border-radius:0 6px 6px 0}
+.help code{background:var(--chip);padding:2px 6px;border-radius:4px;font-size:12px;word-break:break-all}
+.help table{margin:6px 0;font-size:12px}.help td,.help th{padding:4px 6px}
+.help .close{position:sticky;top:0;float:right}
+#helpBtn{border-color:var(--accent);color:var(--accent);font-weight:600}
 @media (max-width:1100px){.kpi{grid-column:span 4}.w8,.w4,.w6{grid-column:span 12}}
 @media (max-width:620px){main{padding:12px 16px}.kpi{grid-column:span 6}header{padding:12px 16px}}
 </style>
@@ -79,9 +92,76 @@ th{color:var(--muted);font-weight:600;font-size:12px}
   <span class="meta" id="srcMeta">—</span>
   <span class="spacer"></span>
   <span class="meta" id="fps">0 fps</span>
+  <button id="helpBtn">How to use</button>
   <button id="pauseBtn">Pause</button>
   <button id="modeBtn" title="Force demo data even when a server is reachable">Demo: auto</button>
 </header>
+
+<div class="help-scrim" id="helpScrim"></div>
+<aside class="help" id="help" aria-label="How to use">
+  <button class="close" id="helpClose">Close ✕</button>
+  <h3>How to use this dashboard</h3>
+  <p class="meta">RuView reads how people disturb the WiFi signals around them. This page shows whether someone is here, whether they're moving, and whether your setup is healthy. With extra sensors, it also shows where they are.</p>
+  <div class="why"><b>Why it's useful:</b> no cameras or wearables. It works in the dark and through walls, and nothing leaves your computer.</div>
+
+  <h4><span class="n">1</span>Start it</h4>
+  <p>In PowerShell, run:</p>
+  <p><code>powershell -ExecutionPolicy Bypass -File C:\RuViewDashboard\start-ruview.ps1</code></p>
+  <p>Keep that window open. Press <b>Ctrl+C</b> in it to stop.</p>
+  <div class="why"><b>Why:</b> the script starts RuView (which reads your WiFi) and this dashboard together. They share a fresh secret token, so you never have to handle it.</div>
+
+  <h4><span class="n">2</span>Check the badge (top left)</h4>
+  <ul><li><b>LIVE</b>: real data from your WiFi</li><li><b>DEMO</b>: made-up practice data, because RuView isn't running</li><li><b>STALE</b>: data stopped arriving; run the script again</li></ul>
+  <div class="why"><b>Why:</b> the page never pretends. If it says DEMO, nothing shown is about your room.</div>
+
+  <h4><span class="n">3</span>Read the Health checklist</h4>
+  <p><b style="color:var(--ok)">✓ green</b> = working · <b style="color:var(--warn)">! yellow</b> = works with limits · <b style="color:var(--bad)">✕ red</b> = something to fix · <b style="color:var(--muted)">– grey</b> = needs extra hardware</p>
+  <p>Each line says what to do if it isn't green.</p>
+  <div class="why"><b>Why:</b> it tells you whether a number can be trusted before you rely on it.</div>
+
+  <h4><span class="n">4</span>Draw your place (one time)</h4>
+  <ol>
+    <li>Click <b>Clear</b> to remove the sample house.</li>
+    <li>Set <b>W</b> and <b>H</b> to your home's size in meters (1 square = 1 m).</li>
+    <li>Click <b>+ Room</b>, drag a box, and type a name. Repeat for each room.</li>
+    <li>Click <b>+ Router</b> and click where your router is. Do the same with <b>+ Laptop</b>.</li>
+    <li>If you get ESP32 boards later, add each with <b>+ ESP32 node</b>.</li>
+  </ol>
+  <p><b>Move</b> drags things around. Double-click a room to rename it. <b>Delete</b> removes items. Your plan saves automatically.</p>
+  <div class="why"><b>Why:</b> WiFi only knows signals. The plan turns "node 2 sees movement" into "you're in the kitchen."</div>
+
+  <h4><span class="n">5</span>Find the person on the plan</h4>
+  <p>The purple figure shows who was sensed. A red number on it means several people are detected.</p>
+  <ul>
+    <li><b>Laptop WiFi only:</b> a circle about 5 m around your laptop, labeled "somewhere in this circle." The laptop knows someone is nearby, but not where.</li>
+    <li><b>1–2 ESP32 boards:</b> the figure stands near the board that sees the most movement, and that room is highlighted.</li>
+    <li><b>3+ ESP32 boards:</b> the figure moves to your estimated spot (±1.5 m) and shows which room you're in.</li>
+  </ul>
+  <div class="why"><b>Why the limit:</b> a position needs measurements from 3+ different spots, the way a phone's GPS uses several satellites. Your laptop is one spot and only measures signal strength, so it can't tell where you are.</div>
+
+  <h4><span class="n">6</span>The other panels</h4>
+  <ul>
+    <li><b>People / Motion:</b> the most reliable readings on laptop WiFi.</li>
+    <li><b>Breathing / Heart:</b> filled in only once RuView trusts them. On laptop WiFi they need calibration with exactly one person present. These are not medical readings.</li>
+    <li><b>Signal waterfall:</b> each row is a WiFi signal, with color showing its strength over time. Movement appears as streaks.</li>
+    <li><b>Pose:</b> needs ESP32 data, and even then it's a rough placeholder.</li>
+    <li><b>Event log:</b> what changed and when.</li>
+  </ul>
+
+  <h4><span class="n">7</span>Get better results</h4>
+  <ul>
+    <li><b>Use it at home, not in a café.</b> Other people's movement confuses the readings.</li>
+    <li><b>Keep the laptop still,</b> with you between it and the router if you can.</li>
+    <li><b>Wait 30 seconds after starting.</b> RuView first learns what the room looks like.</li>
+  </ul>
+
+  <h4><span class="n">8</span>What each setup can do</h4>
+  <table><thead><tr><th>Setup</th><th>Presence</th><th>Vitals</th><th>Room</th><th>Position</th></tr></thead>
+  <tbody><tr><td>Laptop WiFi</td><td>✓ rough</td><td>after calibration</td><td>–</td><td>–</td></tr>
+  <tr><td>1–2 ESP32 (~$9 each)</td><td>✓</td><td>✓</td><td>nearest</td><td>–</td></tr>
+  <tr><td>3+ ESP32</td><td>✓</td><td>✓</td><td>✓</td><td>±1.5 m</td></tr></tbody></table>
+  <div class="why"><b>Why ESP32 boards are better:</b> each one measures 56+ separate channels of every WiFi signal, instead of one strength number. Placed around your home, they give the several viewpoints needed to find you.</div>
+</aside>
 
 <main>
   <section class="card kpi"><h2>People</h2><div><span class="v" id="kPersons">–</span></div><div class="s" id="kPresence">—</div></section>
@@ -332,6 +412,11 @@ function setMode(m){
   $('badgeText').textContent = {live:'LIVE', demo:'DEMO', stale:'STALE', connecting:'CONNECTING'}[m];
 }
 $('pauseBtn').onclick = () => { S.paused = !S.paused; $('pauseBtn').textContent = S.paused ? 'Resume' : 'Pause'; };
+const openHelp = (on) => { document.body.classList.toggle('help-open', on); try { localStorage.setItem('ruview.helpSeen', '1'); } catch {} };
+$('helpBtn').onclick = () => openHelp(true);
+$('helpClose').onclick = $('helpScrim').onclick = () => openHelp(false);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') openHelp(false); });
+try { if (!localStorage.getItem('ruview.helpSeen')) openHelp(true); } catch {}
 $('modeBtn').onclick = () => {
   S.forceDemo = !S.forceDemo;
   $('modeBtn').textContent = S.forceDemo ? 'Demo: forced' : 'Demo: auto';
@@ -606,20 +691,37 @@ function renderOverlay(){
   const L = locate(), person = css('--person');
   const hiRoom = (r) => r && el('rect', {x:r.x, y:r.y, width:r.w, height:r.h, rx:0.08, fill:person, opacity:0.16, stroke:person, 'stroke-width':0.08}, gOverlay);
   let text = '—', sub = '', room = null;
+  const moving = (S.motion ?? 0) > 0.3, tt = performance.now() / 1000;
+  // person figure (~1 m tall); bobs while moving; count badge when several people are detected
+  const figure = (x, y, o = {}) => {
+    const bob = moving ? Math.abs(Math.sin(tt * 6)) * 0.08 : 0;
+    const g = el('g', {transform:`translate(${x} ${y - bob})`, opacity:o.opacity ?? 1}, gOverlay);
+    el('ellipse', {cx:0, cy:0.05 + bob, rx:0.3, ry:0.08, fill:'#000', opacity:0.25}, g);
+    el('path', {d:'M-0.24 0 L-0.24 -0.42 Q-0.24 -0.62 0 -0.62 Q0.24 -0.62 0.24 -0.42 L0.24 0 Z', fill:person}, g);
+    el('circle', {cx:0, cy:-0.82, r:0.17, fill:person}, g);
+    if (o.label){ const t = el('text', {x:0, y:-1.12, 'text-anchor':'middle', 'font-size':0.3, 'font-weight':700, fill:person}, g); t.textContent = o.label; }
+    if ((S.persons ?? 0) > 1){
+      el('circle', {cx:0.3, cy:-0.62, r:0.2, fill:css('--heart')}, g);
+      const c = el('text', {x:0.3, y:-0.52, 'text-anchor':'middle', 'font-size':0.26, 'font-weight':700, fill:'#fff'}, g); c.textContent = S.persons;
+    }
+  };
   if (L.kind === 'point' || L.kind === 'last'){
     room = roomAt(L.x, L.y); hiRoom(room);
     el('circle', {cx:L.x, cy:L.y, r:1.5, fill:person, opacity:0.12, stroke:person, 'stroke-width':0.05, 'stroke-dasharray':'0.15 0.1'}, gOverlay);
-    el('circle', {cx:L.x, cy:L.y, r:0.22, fill:person, opacity:L.kind === 'last' ? 0.5 : 1}, gOverlay);
+    figure(L.x, L.y, {opacity:L.kind === 'last' ? 0.5 : 1, label:L.kind === 'last' ? 'last seen' : 'You'});
     text = L.kind === 'point' ? `You're in the ${room ? room.name : 'space between rooms'}` : `Last seen in the ${room ? room.name : 'space between rooms'}`;
     sub = L.kind === 'point' ? 'Rough estimate from which nodes see the most movement · accuracy about ±1.5 m'
                              : 'Holding still — position held from the last movement';
   } else if (L.kind === 'near'){
     room = roomAt(L.dev.x, L.dev.y); hiRoom(room);
     el('circle', {cx:L.dev.x, cy:L.dev.y, r:0.6, fill:'none', stroke:person, 'stroke-width':0.08}, gOverlay);
+    figure(Math.min(plan.w - 0.4, L.dev.x + 0.8), L.dev.y + 0.4, {label:'near here'});
     text = `Activity is strongest near Node ${L.dev.nid}${room ? ` (${room.name})` : ''}`;
     sub = `Room-level only — ${L.n} node${L.n > 1 ? 's' : ''} placed. Place 3+ nodes around your home to pinpoint a position.`;
   } else if (L.kind === 'range'){
     el('circle', {cx:L.dev.x, cy:L.dev.y, r:5, fill:person, opacity:0.1, stroke:person, 'stroke-width':0.05, 'stroke-dasharray':'0.2 0.12'}, gOverlay);
+    const fx = L.dev.x + (L.dev.x + 1.5 < plan.w ? 1.3 : -1.3);
+    figure(fx, L.dev.y + 0.3, {opacity:0.75, label:'somewhere in this circle'});
     text = 'Someone is within range of the laptop';
     sub = 'Laptop WiFi can tell someone is nearby (≈5 m), not where. Exact position needs 3+ ESP32 nodes.';
   } else if (L.kind === 'still'){
@@ -711,7 +813,7 @@ function checks(){
 
   if (placedReporting.length >= 3) add('ok', 'Locate me in my place', `${placedReporting.length} placed nodes reporting — position estimate on (±1.5 m).`);
   else if (placedReporting.length >= 1) add('warn', 'Locate me in my place', `Room-level only (${placedReporting.length} node${placedReporting.length > 1 ? 's' : ''}). Add ${3 - placedReporting.length} more ESP32 node${3 - placedReporting.length > 1 ? 's' : ''} for a position.`);
-  else add('fail', 'Locate me in my place', 'Not possible with laptop WiFi alone. Needs 3+ ESP32-S3 nodes (~$9 each) placed around your home.');
+  else add('na', 'Locate me in my place', 'Needs extra hardware — not an error. Your laptop is one sensor at one spot, so it can tell someone is nearby but not where. Add 3+ ESP32-S3 boards (~$9 each) around your home to unlock this.');
 
   return C;
 }
