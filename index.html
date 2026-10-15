@@ -89,6 +89,13 @@ body.help-open .help{transform:none}body.help-open .help-scrim{display:block}
 .floors button{border-radius:999px;padding:5px 12px;font-weight:600;position:relative}
 .floors button.on{background:var(--ink);color:var(--panel);border-color:var(--ink)}
 .floors button.here::after{content:'';position:absolute;top:-2px;right:-2px;width:9px;height:9px;border-radius:50%;background:var(--person);box-shadow:0 0 0 2px var(--panel)}
+.ask-scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;display:grid;place-items:center;padding:16px}
+.ask{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(380px,100%);box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.ask p{margin:0 0 12px;font-size:14px;font-weight:600}
+.ask input{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);margin-bottom:14px}
+.ask .row{display:flex;justify-content:flex-end;gap:8px}
+.ask .primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.ask .danger{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}
 @media (max-width:1100px){.kpi{grid-column:span 4}.w8,.w4,.w6{grid-column:span 12}}
 @media (max-width:620px){main{padding:12px 16px}.kpi{grid-column:span 6}header{padding:12px 16px}}
 </style>
@@ -638,6 +645,30 @@ function nodeEnergy(n){
   e.prev = a.slice();
 }
 
+// ---------- in-page dialogs (native prompt()/confirm() are blocked in some embedded browsers) ----------
+function askDialog(message, {input = null, ok = 'OK', danger = false} = {}){
+  return new Promise((resolve) => {
+    const scrim = document.createElement('div'); scrim.className = 'ask-scrim';
+    const box = document.createElement('div'); box.className = 'ask'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true');
+    const msg = document.createElement('p'); msg.textContent = message; box.appendChild(msg);
+    let field = null;
+    if (input != null){ field = document.createElement('input'); field.value = input; box.appendChild(field); }
+    const row = document.createElement('div'); row.className = 'row';
+    const cancel = document.createElement('button'); cancel.textContent = 'Cancel';
+    const go = document.createElement('button'); go.textContent = ok; go.className = danger ? 'danger' : 'primary';
+    row.append(cancel, go); box.appendChild(row); scrim.appendChild(box); document.body.appendChild(scrim);
+    const done = (v) => { scrim.remove(); document.removeEventListener('keydown', key, true); resolve(v); };
+    const key = (e) => { if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); done(null); } else if (e.key === 'Enter'){ e.preventDefault(); e.stopPropagation(); go.click(); } };
+    document.addEventListener('keydown', key, true);
+    cancel.onclick = () => done(null);
+    scrim.onclick = (e) => { if (e.target === scrim) done(null); };
+    go.onclick = () => done(field ? field.value : true);
+    setTimeout(() => (field ? (field.focus(), field.select()) : go.focus()), 0);
+  });
+}
+const askText = (message, value) => askDialog(message, {input:value ?? '', ok:'Save'});
+const askConfirm = async (message, ok = 'Delete') => (await askDialog(message, {ok, danger:true})) === true;
+
 // ---------- floor plan ----------
 const HOME_KEY = 'ruview.home.v2', OLD_PLAN_KEY = 'ruview.plan.v1';
 function sampleHome(){
@@ -697,8 +728,8 @@ function renderFloorTabs(){
   });
   const add = document.createElement('button');
   add.textContent = '+ Floor';
-  add.onclick = () => {
-    const name = prompt('Name for the new floor:', home.floors.length === 1 ? 'Upstairs' : `Floor ${home.floors.length + 1}`);
+  add.onclick = async () => {
+    const name = await askText('Name for the new floor:', home.floors.length === 1 ? 'Upstairs' : `Floor ${home.floors.length + 1}`);
     if (name == null) return;
     home.floors.push({id:uid(), name:name.trim() || `Floor ${home.floors.length + 1}`, w:plan.w, h:plan.h, rooms:[], devices:[]});
     plan.sample = false; setFloor(home.floors.length - 1);
@@ -706,8 +737,8 @@ function renderFloorTabs(){
   box.appendChild(add);
   $('floorDelete').disabled = home.floors.length < 2;
 }
-function renameFloor(i){
-  const name = prompt('Rename floor:', home.floors[i].name);
+async function renameFloor(i){
+  const name = await askText('Rename floor:', home.floors[i].name);
   if (name != null && name.trim()){ home.floors[i].name = name.trim(); plan.sample = false; savePlan(); renderFloorTabs(); }
 }
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -754,7 +785,7 @@ function renderPlan(){
   $('planW').value = plan.w; $('planH').value = plan.h;
 }
 
-svg.addEventListener('pointerdown', (ev) => {
+svg.addEventListener('pointerdown', async (ev) => {
   const p = svgPoint(ev), hit = ev.target.closest('[data-kind]');
   const kind = hit?.dataset.kind, id = hit?.dataset.id;
   if (mode === 'delete' && hit){ removeItem(kind, id); return; }
@@ -763,13 +794,17 @@ svg.addEventListener('pointerdown', (ev) => {
     const dev = {id:uid(), type:mode, x:snap(p.x), y:snap(p.y)};
     if (mode === 'node'){
       const used = allDevices().filter(d => d.type === 'node').map(d => +d.nid);
-      const ans = prompt('ESP32 node ID (the node_id the sensing server reports):', String(used.length ? Math.max(...used) + 1 : 1));
+      const ans = await askText('ESP32 node ID (the node_id the sensing server reports):', String(used.length ? Math.max(...used) + 1 : 1));
       if (ans == null || ans.trim() === '') return;
       dev.nid = ans.trim();
     }
     plan.devices.push(dev); plan.sample = false; savePlan(); setPlanMode('select'); return;
   }
   if (mode === 'select'){
+    // our own double-click detection: re-rendering on the first click stops the browser's dblclick from firing
+    const now = performance.now(), again = hit && kind === 'room' && lastTap.id === id && now - lastTap.t < 400;
+    lastTap = {id: hit ? id : null, t: now};
+    if (again){ selected = {kind, id}; drag = null; renameRoom(id); return; }
     selected = hit ? {kind, id} : null;
     if (hit){
       const obj = kind === 'room' ? plan.rooms.find(r => r.id === id) : plan.devices.find(d => d.id === id);
@@ -791,25 +826,25 @@ svg.addEventListener('pointermove', (ev) => {
   }
   renderPlan();
 });
-svg.addEventListener('pointerup', () => {
+svg.addEventListener('pointerup', async () => {
   if (!drag) return;
-  if (drag.kind === 'draft'){
-    if (draft && draft.w >= 1 && draft.h >= 1){
-      const name = prompt('Room name:', `Room ${plan.rooms.length + 1}`);
-      if (name != null) plan.rooms.push({id:uid(), name:name.trim() || 'Room', ...draft});
-    }
-    draft = null;
+  const wasDraft = drag.kind === 'draft', box = draft;
+  drag = null;
+  if (wasDraft && box && box.w >= 1 && box.h >= 1){
+    const name = await askText('Room name:', `Room ${plan.rooms.length + 1}`);
+    if (name != null){ plan.rooms.push({id:uid(), name:name.trim() || 'Room', ...box}); plan.sample = false; }
   }
-  drag = null; plan.sample = false; savePlan(); renderPlan();
+  draft = null;
+  if (!wasDraft) plan.sample = false;
+  savePlan(); renderPlan();
 });
-svg.addEventListener('dblclick', (ev) => {
-  // the first click re-renders the plan, so fall back to the room that click selected
-  const hit = ev.target.closest('[data-kind="room"]');
-  const rid = hit?.dataset.id || (selected?.kind === 'room' ? selected.id : null);
-  const r = rid && plan.rooms.find(x => x.id === rid); if (!r) return;
-  const name = prompt('Rename room:', r.name);
-  if (name != null && name.trim()){ r.name = name.trim(); plan.sample = false; savePlan(); renderPlan(); }
-});
+let lastTap = {id:null, t:0};
+async function renameRoom(rid){
+  const r = plan.rooms.find(x => x.id === rid); if (!r) return;
+  const name = await askText('Rename room:', r.name);
+  if (name != null && name.trim()){ r.name = name.trim(); plan.sample = false; savePlan(); }
+  renderPlan(); updateHint();
+}
 function itemName(kind, id){
   if (kind === 'room') return plan.rooms.find(r => r.id === id)?.name || 'room';
   const d = plan.devices.find(x => x.id === id);
@@ -822,7 +857,8 @@ function removeItem(kind, id){
 }
 function deleteSelected(){
   if (!selected) return false;
-  if (confirm(`Delete "${itemName(selected.kind, selected.id)}"?`)) removeItem(selected.kind, selected.id);
+  const sel = selected;
+  askConfirm(`Delete "${itemName(sel.kind, sel.id)}"?`).then(ok => { if (ok) removeItem(sel.kind, sel.id); });
   return true;
 }
 function updateHint(){
@@ -831,7 +867,7 @@ function updateHint(){
     : 'click a room or device to select it · drag to move · double-click a room to rename';
 }
 document.addEventListener('keydown', (e) => {
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')){ e.preventDefault(); deleteSelected(); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !document.querySelector('.ask-scrim') && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')){ e.preventDefault(); deleteSelected(); }
   if (e.key === 'Escape' && selected){ selected = null; renderPlan(); updateHint(); }
 });
 function setPlanMode(m){
@@ -847,12 +883,12 @@ document.querySelectorAll('#toolbar [data-mode]').forEach(b => b.onclick = () =>
   if (b.dataset.mode !== 'select') selected = null;
   setPlanMode(b.dataset.mode);
 });
-$('planSample').onclick = () => { if (confirm('Replace ALL your floors with the two-floor sample?')){ home = sampleHome(); setFloor(0); } };
-$('planClear').onclick = () => { if (confirm(`Clear all rooms and devices on "${plan.name}"?`)){ plan.rooms = []; plan.devices = []; plan.sample = false; savePlan(); renderPlan(); } };
+$('planSample').onclick = async () => { if (await askConfirm('Replace ALL your floors with the two-floor sample?', 'Replace')){ home = sampleHome(); setFloor(0); } };
+$('planClear').onclick = async () => { if (await askConfirm(`Clear all rooms and devices on "${plan.name}"?`, 'Clear')){ plan.rooms = []; plan.devices = []; plan.sample = false; savePlan(); renderPlan(); } };
 $('floorRename').onclick = () => renameFloor(home.active);
-$('floorDelete').onclick = () => {
+$('floorDelete').onclick = async () => {
   if (home.floors.length < 2) return;
-  if (!confirm(`Delete "${plan.name}" and everything on it?`)) return;
+  if (!(await askConfirm(`Delete "${plan.name}" and everything on it?`, 'Delete floor'))) return;
   home.floors.splice(home.active, 1); home.sample = false; setFloor(Math.max(0, home.active - 1));
 };
 ['planW', 'planH'].forEach(id => $(id).onchange = () => {
