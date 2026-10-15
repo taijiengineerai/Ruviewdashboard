@@ -683,7 +683,7 @@ plan = home.floors[home.active];
 // every edit goes through savePlan; editing anything marks the home as yours (no longer the sample)
 const savePlan = () => { if (plan.sample === false){ home.sample = false; delete plan.sample; } try { localStorage.setItem(HOME_KEY, JSON.stringify(home)); } catch {} };
 const allDevices = () => home.floors.flatMap((f, fi) => f.devices.map(d => ({...d, floor:fi})));
-function setFloor(i){ home.active = i; plan = home.floors[i]; drag = null; draft = null; savePlan(); renderFloorTabs(); renderPlan(); }
+function setFloor(i){ home.active = i; plan = home.floors[i]; drag = null; draft = null; selected = null; savePlan(); renderFloorTabs(); renderPlan(); }
 let hereFloor = null;
 function renderFloorTabs(){
   const box = $('floorTabs'); box.innerHTML = '';
@@ -714,7 +714,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const snap = (v) => Math.round(v * 2) / 2;
 const NS = 'http://www.w3.org/2000/svg';
 const svg = $('plan');
-let mode = 'select', drag = null, draft = null;
+let mode = 'select', drag = null, draft = null, selected = null;
 
 function el(tag, attrs, parent){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; }
 function svgPoint(ev){ const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; const q = p.matrixTransform(svg.getScreenCTM().inverse()); return {x:Math.max(0, Math.min(plan.w, q.x)), y:Math.max(0, Math.min(plan.h, q.y))}; }
@@ -734,7 +734,8 @@ function renderPlan(){
   gOverlay = el('g', {'pointer-events':'none'}, svg);
   plan.rooms.forEach(r => {
     const g = el('g', {'data-kind':'room', 'data-id':r.id, cursor: mode === 'select' ? 'move' : mode === 'delete' ? 'not-allowed' : 'crosshair'}, gStatic);
-    el('rect', {x:r.x, y:r.y, width:r.w, height:r.h, rx:0.08, fill:css('--panel'), stroke:css('--muted'), 'stroke-width':0.06}, g);
+    const sel = selected && selected.id === r.id;
+    el('rect', {x:r.x, y:r.y, width:r.w, height:r.h, rx:0.08, fill:css('--panel'), stroke:sel ? css('--accent') : css('--muted'), 'stroke-width':sel ? 0.14 : 0.06}, g);
     const t = el('text', {x:r.x + r.w / 2, y:r.y + 0.55, 'text-anchor':'middle', 'font-size':0.42, fill:css('--muted'), 'font-weight':600}, g);
     t.textContent = r.name;
     const sz = el('text', {x:r.x + r.w / 2, y:r.y + 0.9, 'text-anchor':'middle', 'font-size':0.26, fill:css('--muted'), opacity:0.8}, g);
@@ -746,6 +747,7 @@ function renderPlan(){
     if (d.type === 'router'){ el('rect', {x:-0.28, y:-0.28, width:0.56, height:0.56, transform:'rotate(45)', fill:css('--accent')}, g); }
     else if (d.type === 'laptop'){ el('rect', {x:-0.36, y:-0.24, width:0.72, height:0.48, rx:0.06, fill:css('--ink')}, g); }
     else { el('circle', {r:0.3, fill:css('--breath')}, g); const n = el('text', {y:0.11, 'text-anchor':'middle', 'font-size':0.3, fill:'#fff', 'font-weight':700}, g); n.textContent = d.nid; }
+    if (selected && selected.id === d.id) el('circle', {r:0.48, fill:'none', stroke:css('--accent'), 'stroke-width':0.08}, g);
     const lb = el('text', {y:0.68, 'text-anchor':'middle', 'font-size':0.28, fill:css('--ink')}, g);
     lb.textContent = d.type === 'router' ? 'Router' : d.type === 'laptop' ? 'Laptop' : `Node ${d.nid}`;
   });
@@ -755,10 +757,7 @@ function renderPlan(){
 svg.addEventListener('pointerdown', (ev) => {
   const p = svgPoint(ev), hit = ev.target.closest('[data-kind]');
   const kind = hit?.dataset.kind, id = hit?.dataset.id;
-  if (mode === 'delete' && hit){
-    if (kind === 'room') plan.rooms = plan.rooms.filter(r => r.id !== id); else plan.devices = plan.devices.filter(d => d.id !== id);
-    plan.sample = false; savePlan(); renderPlan(); return;
-  }
+  if (mode === 'delete' && hit){ removeItem(kind, id); return; }
   if (mode === 'room'){ drag = {kind:'draft', x0:snap(p.x), y0:snap(p.y)}; draft = {x:drag.x0, y:drag.y0, w:0, h:0}; svg.setPointerCapture(ev.pointerId); return; }
   if (mode === 'router' || mode === 'laptop' || mode === 'node'){
     const dev = {id:uid(), type:mode, x:snap(p.x), y:snap(p.y)};
@@ -770,9 +769,13 @@ svg.addEventListener('pointerdown', (ev) => {
     }
     plan.devices.push(dev); plan.sample = false; savePlan(); setPlanMode('select'); return;
   }
-  if (mode === 'select' && hit){
-    const obj = kind === 'room' ? plan.rooms.find(r => r.id === id) : plan.devices.find(d => d.id === id);
-    drag = {kind, obj, dx:p.x - obj.x, dy:p.y - obj.y}; svg.setPointerCapture(ev.pointerId);
+  if (mode === 'select'){
+    selected = hit ? {kind, id} : null;
+    if (hit){
+      const obj = kind === 'room' ? plan.rooms.find(r => r.id === id) : plan.devices.find(d => d.id === id);
+      drag = {kind, obj, dx:p.x - obj.x, dy:p.y - obj.y}; svg.setPointerCapture(ev.pointerId);
+    }
+    renderPlan(); updateHint();
   }
 });
 svg.addEventListener('pointermove', (ev) => {
@@ -800,18 +803,50 @@ svg.addEventListener('pointerup', () => {
   drag = null; plan.sample = false; savePlan(); renderPlan();
 });
 svg.addEventListener('dblclick', (ev) => {
-  const hit = ev.target.closest('[data-kind="room"]'); if (!hit) return;
-  const r = plan.rooms.find(x => x.id === hit.dataset.id);
+  // the first click re-renders the plan, so fall back to the room that click selected
+  const hit = ev.target.closest('[data-kind="room"]');
+  const rid = hit?.dataset.id || (selected?.kind === 'room' ? selected.id : null);
+  const r = rid && plan.rooms.find(x => x.id === rid); if (!r) return;
   const name = prompt('Rename room:', r.name);
   if (name != null && name.trim()){ r.name = name.trim(); plan.sample = false; savePlan(); renderPlan(); }
+});
+function itemName(kind, id){
+  if (kind === 'room') return plan.rooms.find(r => r.id === id)?.name || 'room';
+  const d = plan.devices.find(x => x.id === id);
+  return !d ? 'item' : d.type === 'router' ? 'Router' : d.type === 'laptop' ? 'Laptop' : `Node ${d.nid}`;
+}
+function removeItem(kind, id){
+  if (kind === 'room') plan.rooms = plan.rooms.filter(r => r.id !== id); else plan.devices = plan.devices.filter(d => d.id !== id);
+  if (selected && selected.id === id) selected = null;
+  plan.sample = false; savePlan(); renderPlan(); updateHint();
+}
+function deleteSelected(){
+  if (!selected) return false;
+  if (confirm(`Delete "${itemName(selected.kind, selected.id)}"?`)) removeItem(selected.kind, selected.id);
+  return true;
+}
+function updateHint(){
+  if (mode === 'select') $('placeHint').textContent = selected
+    ? `"${itemName(selected.kind, selected.id)}" selected · press Delete to remove · drag to move`
+    : 'click a room or device to select it · drag to move · double-click a room to rename';
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')){ e.preventDefault(); deleteSelected(); }
+  if (e.key === 'Escape' && selected){ selected = null; renderPlan(); updateHint(); }
 });
 function setPlanMode(m){
   mode = m;
   document.querySelectorAll('#toolbar [data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-  $('placeHint').textContent = {select:'drag to move · double-click a room to rename', room:'drag on the grid to draw a room', router:'click where your router is', laptop:'click where your laptop is', node:'click where an ESP32 node is', delete:'click a room or device to remove it'}[m];
+  $('placeHint').textContent = {select:'drag to move · double-click a room to rename', room:'drag on the grid to draw a room', router:'click where your router is', laptop:'click where your laptop is', node:'click where an ESP32 node is', delete:'click a room or device to remove it · click Move when done'}[m];
+  updateHint();
   renderPlan();
 }
-document.querySelectorAll('#toolbar [data-mode]').forEach(b => b.onclick = () => setPlanMode(b.dataset.mode));
+document.querySelectorAll('#toolbar [data-mode]').forEach(b => b.onclick = () => {
+  // Delete with something selected removes it right away; otherwise it switches to click-to-delete mode
+  if (b.dataset.mode === 'delete' && mode === 'select' && deleteSelected()) return;
+  if (b.dataset.mode !== 'select') selected = null;
+  setPlanMode(b.dataset.mode);
+});
 $('planSample').onclick = () => { if (confirm('Replace ALL your floors with the two-floor sample?')){ home = sampleHome(); setFloor(0); } };
 $('planClear').onclick = () => { if (confirm(`Clear all rooms and devices on "${plan.name}"?`)){ plan.rooms = []; plan.devices = []; plan.sample = false; savePlan(); renderPlan(); } };
 $('floorRename').onclick = () => renameFloor(home.active);
