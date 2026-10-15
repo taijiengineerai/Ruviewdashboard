@@ -12,7 +12,28 @@ It also has:
 
 With no sensing server running it shows **DEMO** data generated in the browser. It switches to **LIVE** when it can reach one.
 
-## Run
+## Quick start (Windows, laptop WiFi)
+
+After building RuView once (below), this one command starts the sensing server in WiFi mode and the dashboard. It also generates a fresh token and opens your browser:
+
+```
+powershell -ExecutionPolicy Bypass -File C:\RuViewDashboard\start-ruview.ps1
+```
+
+Press Ctrl+C in that window to stop both.
+
+**One-time build** (Rust 1.89 is installed automatically; the build takes about 6 minutes):
+
+```
+cd C:\RuView
+git submodule update --init --recursive --depth 1
+cd v2
+cargo build --release -p wifi-densepose-sensing-server
+```
+
+In laptop WiFi mode the server withholds breathing and heart rate until it has been calibrated with exactly one person present. Pose and location also need ESP32 CSI nodes.
+
+## Run (manual)
 
 1. Start a RuView sensing server on port 3000 (see below).
 2. In this folder, run:

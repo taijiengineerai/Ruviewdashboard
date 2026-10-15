@@ -184,10 +184,12 @@ function ingest(d){
     S.heart  = num(vs.heart_bpm, vs.heart_rate, S.heart);
     S.bConf  = num(vs.breathing_confidence, vs.confidence, S.bConf);
     S.hConf  = num(vs.heart_confidence, vs.confidence, S.hConf);
-    S.motion = num(vs.motion_level, S.motion);
+    S.motion = num(typeof vs.motion_level === 'number' && vs.motion_level <= 1.5 ? vs.motion_level : null, S.motion);
   }
   const f = d.features || {};
-  S.motion  = num(d.motion_level, f.motion_level, f.motion_band_power, S.motion);
+  const MOTION_LABEL = {absent:0, empty:0, present_still:0.15, still:0.15, present_moving:0.6, moving:0.6, active:0.8};
+  const unit = (x) => (typeof x === 'number' && x >= 0 && x <= 1.5) ? x : null;
+  S.motion  = num(unit(d.motion_level), unit(f.motion_level), MOTION_LABEL[(d.classification || {}).motion_level], S.motion);
   S.quality = num(d.signal_quality, f.signal_quality, d.quality, S.quality);
   const cls = d.classification || {};
   S.activity = cls.motion_level || cls.activity || d.activity || S.activity;
@@ -199,7 +201,7 @@ function ingest(d){
   if (Array.isArray(d.nodes) && d.nodes.length){
     S.nodes = d.nodes;
     amp = d.nodes.find(n => Array.isArray(n.amplitude) && n.amplitude.length)?.amplitude;
-    d.nodes.forEach(nodeEnergy);
+    if (!rssiSource()) d.nodes.forEach(nodeEnergy);
   }
   amp = amp || d.amplitude || f.amplitude;
   if (Array.isArray(amp) && amp.length && typeof amp[0] === 'number'){ S.subs = amp.length; pushColumn(amp); }
@@ -265,9 +267,11 @@ function startPolling(){
   }, 1000);
 }
 function ingestVitalsOnly(v){
-  S.breath = num(v.breathing_bpm, S.breath); S.heart = num(v.heart_bpm, S.heart);
-  S.bConf = num(v.breathing_confidence, v.confidence, S.bConf); S.hConf = num(v.heart_confidence, v.confidence, S.hConf);
-  S.motion = num(v.motion_level, S.motion);
+  S.vitalsWithheld = v.authority === 'abstained' ? (v.abstention_reason || 'withheld by server') : null;
+  const x = v.vital_signs || v;
+  if (S.vitalsWithheld){ S.breath = S.heart = S.bConf = S.hConf = null; return; }
+  S.breath = num(x.breathing_bpm, x.breathing_rate_bpm, S.breath); S.heart = num(x.heart_bpm, x.heart_rate_bpm, S.heart);
+  S.bConf = num(x.breathing_confidence, x.confidence, S.bConf); S.hConf = num(x.heart_confidence, x.heartbeat_confidence, x.confidence, S.hConf);
 }
 
 // ---------- demo generator ----------
@@ -276,7 +280,7 @@ function startDemo(){
   setMode('demo');
   if (demoTimer) return;
   try { ws?.close(); } catch {} clearInterval(pollTimer);
-  S.source = 'demo (in-browser simulation)'; S.sourceState = 'synthetic';
+  S.source = 'demo (in-browser simulation)'; S.sourceState = 'synthetic'; S.vitalsWithheld = null;
   demoTimer = setInterval(() => {
     if (S.paused) return;
     const t = (performance.now() - t0) / 1000;
@@ -367,7 +371,7 @@ function drawWaterfall(){
   g.clearRect(0,0,w,h);
   g.drawImage(wf, 0, 0, w, h);
   g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '11px system-ui';
-  g.fillText(`${S.subs || '–'} subcarriers`, 8, 16);
+  g.fillText(`${S.subs || '–'} ${rssiSource() ? 'WiFi access points (signal strength)' : 'subcarriers'}`, 8, 16);
 }
 
 function line(g, data, key, x0, w, y0, h, lo, hi, color){
@@ -408,7 +412,9 @@ const EDGES = [[0,1],[0,2],[1,3],[2,4],[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,
 function drawPose(){
   const [g, w, h] = fit($('cPose')); g.clearRect(0,0,w,h);
   const kp = S.keypoints;
-  if (!kp || kp.length < 17){ g.fillStyle = css('--muted'); g.font = '13px system-ui'; g.textAlign = 'center'; g.fillText(S.persons === 0 ? 'No one detected' : 'No pose data', w/2, h/2); g.textAlign = 'left'; return; }
+  const noConf = kp && kp.length >= 17 && kp.every(p => !p.confidence);
+  if (!kp || kp.length < 17 || noConf){
+    $('poseInfo').textContent = noConf ? 'confidence 0' : ''; g.fillStyle = css('--muted'); g.font = '13px system-ui'; g.textAlign = 'center'; g.fillText(S.persons === 0 ? 'No one detected' : noConf ? (rssiSource() ? 'No pose from laptop WiFi (needs CSI)' : 'Pose not available (confidence 0)') : 'No pose data', w/2, h/2); g.textAlign = 'left'; return; }
   let mx = 0; kp.forEach(p => { mx = Math.max(mx, Math.abs(p.x), Math.abs(p.y)); });
   const sc = mx > 1.5 ? 1 / mx : 1, size = Math.min(w, h) - 16, ox = (w - size) / 2, oy = 8;
   const P = kp.map(p => [ox + p.x * sc * size, oy + p.y * sc * size, p.confidence ?? 1]);
@@ -419,6 +425,9 @@ function drawPose(){
   const avg = kp.reduce((s, p) => s + (p.confidence ?? 0), 0) / kp.length;
   $('poseInfo').textContent = `avg conf ${avg.toFixed(2)}`;
 }
+
+// laptop WiFi mode reports nearby access points' signal strength as one pseudo-node — not CSI
+const rssiSource = () => /^wifi/i.test(String(S.source || ''));
 
 // ---------- per-node motion energy (frame-to-frame CSI change vs. that node's own quiet baseline) ----------
 const NE = {};
@@ -648,7 +657,7 @@ async function pollWifi(){
 function checks(){
   const demo = S.mode === 'demo', live = S.mode === 'live' || S.mode === 'stale';
   const src = String(S.source || '').toLowerCase();
-  const csi = /esp32|csi|mediatek|qualcomm|realtek/.test(src) || S.nodes.some(n => Array.isArray(n.amplitude) && n.amplitude.length);
+  const csi = !rssiSource() && (/esp32|csi|mediatek|qualcomm|realtek/.test(src) || S.nodes.some(n => Array.isArray(n.amplitude) && n.amplitude.length));
   const rssiOnly = live && /wifi/.test(src) && !csi;
   const now = performance.now(), age = live ? (S.frameAgeMs ?? (S.lastFrame ? now - S.lastFrame : null)) : null;
   const w = S.wifi;
@@ -686,7 +695,8 @@ function checks(){
   add(S.persons == null ? 'na' : 'ok', 'Presence detection', S.persons == null ? 'No reading yet.' : S.persons ? `${S.persons} person${S.persons > 1 ? 's' : ''} detected` : 'Working — room currently empty');
 
   const vOk = (S.bConf ?? 0) >= 0.5;
-  add(S.persons ? (vOk ? 'ok' : 'warn') : 'na', 'Breathing / heart readings',
+  if (live && S.vitalsWithheld) add('warn', 'Breathing / heart readings', `Server is withholding vitals: ${S.vitalsWithheld}.`);
+  else add(S.persons ? (vOk ? 'ok' : 'warn') : 'na', 'Breathing / heart readings',
       !S.persons ? 'Needs someone in the room.' : vOk ? `Breathing confidence ${S.bConf.toFixed(2)}` : 'Low confidence — sit still within 1–2 m of the sensor for 30 s.');
 
   const userRooms = plan.rooms.length && !plan.sample;
@@ -719,13 +729,13 @@ let lastState = null, fpsFrames = 0, fpsT = performance.now();
 function updateDOM(){
   $('kPersons').textContent = S.persons ?? '–';
   $('kPresence').textContent = S.persons == null ? '—' : S.persons > 0 ? 'room occupied' : 'room empty';
-  $('kBreath').textContent = fmt(S.breath); $('kBreathC').textContent = `confidence ${fmt(S.bConf, 2)}`; pct('bBreath', S.bConf);
-  $('kHeart').textContent = fmt(S.heart, 0); $('kHeartC').textContent = `confidence ${fmt(S.hConf, 2)}`; pct('bHeart', S.hConf);
+  $('kBreath').textContent = fmt(S.breath); $('kBreathC').textContent = S.vitalsWithheld && S.mode !== 'demo' ? 'withheld — needs calibration' : `confidence ${fmt(S.bConf, 2)}`; pct('bBreath', S.bConf);
+  $('kHeart').textContent = fmt(S.heart, 0); $('kHeartC').textContent = S.vitalsWithheld && S.mode !== 'demo' ? 'withheld — needs calibration' : `confidence ${fmt(S.hConf, 2)}`; pct('bHeart', S.hConf);
   $('kMotion').textContent = fmt(S.motion, 2); pct('bMotion', S.motion);
   $('kActivity').textContent = S.activity ? String(S.activity).replace(/_/g, ' ') : '—';
   $('kQuality').textContent = fmt(S.quality, 2); pct('bQuality', S.quality);
   $('kQuality').style.color = S.quality == null ? '' : S.quality > .4 ? css('--ok') : css('--warn');
-  $('kNodes').textContent = S.nodes.length || '–'; $('kSubs').textContent = `${S.subs || '—'} subcarriers`;
+  $('kNodes').textContent = S.nodes.length || '–'; $('kSubs').textContent = `${S.subs || '—'} ${rssiSource() ? 'access points heard' : 'subcarriers'}`;
   $('srcMeta').textContent = [S.source && `source: ${S.source}`, S.sourceState && `state: ${S.sourceState}`].filter(Boolean).join(' · ') || '—';
 
   const st = S.persons == null ? '—' : S.persons === 0 ? 'Empty' : (S.motion ?? 0) > 0.3 ? 'Moving' : 'Present, still';
