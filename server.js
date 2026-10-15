@@ -11,6 +11,7 @@ const http = require('http');
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 
 const TARGET = new URL(process.env.RUVIEW_URL || 'http://localhost:3000');
 const PORT = Number(process.env.PORT || 8090);
@@ -27,7 +28,32 @@ function upstreamHeaders(h) {
 
 const isProxied = (u) => u.startsWith('/api') || u.startsWith('/health') || u.startsWith('/ws');
 
+// Laptop WiFi status for the health checklist (Windows: netsh). Read-only; returns SSID/signal, never passwords.
+function localWifi(res) {
+  const send = (o) => { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(o)); };
+  if (process.platform !== 'win32') return send({ available: false, reason: 'WiFi check is Windows-only' });
+  execFile('netsh', ['wlan', 'show', 'interfaces'], { timeout: 4000, windowsHide: true }, (err, out) => {
+    if (err) return send({ available: false, reason: 'netsh failed' });
+    const f = {};
+    for (const line of out.split(/\r?\n/)) {
+      const m = line.match(/^\s*([^:]+?)\s*:\s*(.*)$/);
+      if (m && !(m[1] in f)) f[m[1].toLowerCase()] = m[2].trim();
+    }
+    send({
+      available: true,
+      state: f.state || null,
+      ssid: f.ssid || null,
+      signal: f.signal ? parseInt(f.signal, 10) : null,
+      radio: f['radio type'] || null,
+      band: f.band || null,
+      channel: f.channel || null,
+      rx_mbps: f['receive rate (mbps)'] || null,
+    });
+  });
+}
+
 const server = http.createServer((req, res) => {
+  if (req.url === '/local/wifi') return localWifi(res);
   if (isProxied(req.url)) {
     const up = http.request(
       { hostname: TARGET.hostname, port: TARGET.port || 80, path: req.url, method: req.method, headers: upstreamHeaders(req.headers), timeout: 4000 },

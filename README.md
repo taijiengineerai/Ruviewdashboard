@@ -2,6 +2,14 @@
 
 A local dashboard for the [RuView](https://github.com/ruvnet/RuView) sensing server: people count, breathing and heart rate, motion, signal quality, CSI waterfall, 17-keypoint pose, nodes and an event log.
 
+It also has:
+
+- **Health checklist.** Shows whether the dashboard is running, whether your laptop is on WiFi (network name and signal, read with `netsh`), whether the sensing server is reachable and frames are arriving, signal quality, presence, vitals, floor-plan setup, and whether locating you is possible.
+- **My place.** Draw your rooms on a 1 m grid, then place your router, laptop and ESP32 nodes. The plan is saved in your browser. Depending on what you have, it shows:
+  - **3+ ESP32 nodes:** a rough position, about ±1.5 m, worked out from which nodes see the most movement. The room you're in is highlighted.
+  - **1–2 nodes:** the room nearest the strongest activity.
+  - **Laptop WiFi only:** a ~5 m "someone is nearby" circle. RSSI can't tell where you are.
+
 With no sensing server running it shows **DEMO** data generated in the browser. It switches to **LIVE** when it can reach one.
 
 ## Run

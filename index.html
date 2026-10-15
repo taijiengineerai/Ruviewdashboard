@@ -51,6 +51,23 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 .note{font-size:11.5px;color:var(--muted);margin-top:8px}
 .empty{color:var(--muted);font-size:13px;padding:8px 0}
 .state{font-size:22px;font-weight:650}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center}
+.toolbar button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.toolbar .sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+.toolbar label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px}
+.toolbar input{width:48px;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+#plan{width:100%;height:auto;display:block;border-radius:8px;background:var(--chip);touch-action:none;user-select:none}
+#plan text{font-family:system-ui,sans-serif;pointer-events:none}
+.locline{margin-top:10px;font-size:14px;font-weight:600}
+.locline small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:2px}
+.checks{list-style:none;margin:0;padding:0}
+.checks li{display:grid;grid-template-columns:22px 1fr;gap:2px 8px;padding:7px 0;border-bottom:1px solid var(--line)}
+.checks li:last-child{border-bottom:0}
+.checks .ic{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:800;color:#fff;margin-top:1px}
+.checks .ok .ic{background:var(--ok)}.checks .warn .ic{background:var(--warn)}.checks .fail .ic{background:var(--bad)}.checks .na .ic{background:var(--muted)}
+.checks b{font-weight:600;font-size:13px}
+.checks span.d{grid-column:2;font-size:12px;color:var(--muted)}
+.score{font-size:12px;font-weight:700;color:var(--ink);text-transform:none;letter-spacing:0}
 @media (max-width:1100px){.kpi{grid-column:span 4}.w8,.w4,.w6{grid-column:span 12}}
 @media (max-width:620px){main{padding:12px 16px}.kpi{grid-column:span 6}header{padding:12px 16px}}
 </style>
@@ -73,6 +90,31 @@ th{color:var(--muted);font-weight:600;font-size:12px}
   <section class="card kpi"><h2>Motion</h2><div><span class="v" id="kMotion" style="color:var(--motion)">–</span></div><div class="s" id="kActivity">—</div><div class="bar"><i id="bMotion" style="background:var(--motion)"></i></div></section>
   <section class="card kpi"><h2>Signal quality</h2><div><span class="v" id="kQuality">–</span></div><div class="s" id="kQualityS">aim for &gt; 0.40</div><div class="bar"><i id="bQuality"></i></div></section>
   <section class="card kpi"><h2>Nodes</h2><div><span class="v" id="kNodes">–</span></div><div class="s" id="kSubs">— subcarriers</div></section>
+
+  <section class="card w8">
+    <h2>My place <span class="legend" id="placeHint">drag to move · double-click a room to rename</span></h2>
+    <div class="toolbar" id="toolbar">
+      <button data-mode="select" class="on">Move</button>
+      <button data-mode="room">+ Room</button>
+      <button data-mode="router">+ Router</button>
+      <button data-mode="laptop">+ Laptop</button>
+      <button data-mode="node">+ ESP32 node</button>
+      <button data-mode="delete">Delete</button>
+      <span class="sep"></span>
+      <label>W <input id="planW" type="number" min="3" max="60" step="1"> m</label>
+      <label>H <input id="planH" type="number" min="3" max="60" step="1"> m</label>
+      <span class="sep"></span>
+      <button id="planSample">Sample</button>
+      <button id="planClear">Clear</button>
+    </div>
+    <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="locline" id="locText">—</div>
+    <div class="note">Draw your rooms (1 grid square = 1 m) and place your router, laptop and any ESP32 nodes where they really are. Saved in this browser.</div>
+  </section>
+  <section class="card w4">
+    <h2>Health checklist <span class="score" id="healthScore"></span></h2>
+    <ul class="checks" id="checks"></ul>
+  </section>
 
   <section class="card w8">
     <h2>Vital signs — last 2 minutes <span class="legend"><span><b style="background:var(--breath)"></b>Breathing</span><span><b style="background:var(--heart)"></b>Heart</span></span></h2>
@@ -118,6 +160,7 @@ const S = {
   motion: null, quality: null, activity: null, source: null, sourceState: null,
   nodes: [], subs: 0, keypoints: null,
   vitals: [], motionHist: [], frames: 0, lastFrame: 0,
+  nodeScore: {}, health: null, wifi: null, frameAgeMs: null, lastFix: null,
 };
 const MAXV = 240; // ~2 min at 2 Hz sampling
 
@@ -156,6 +199,7 @@ function ingest(d){
   if (Array.isArray(d.nodes) && d.nodes.length){
     S.nodes = d.nodes;
     amp = d.nodes.find(n => Array.isArray(n.amplitude) && n.amplitude.length)?.amplitude;
+    d.nodes.forEach(nodeEnergy);
   }
   amp = amp || d.amplitude || f.amplitude;
   if (Array.isArray(amp) && amp.length && typeof amp[0] === 'number'){ S.subs = amp.length; pushColumn(amp); }
@@ -178,14 +222,14 @@ async function tryLive(){
   if (S.forceDemo) return startDemo();
   try {
     const h = await getJSON('/health');
-    S.source = h.source || null;
+    S.source = h.source || null; S.health = h;
     stopDemo(); setMode('live');
     log(`Connected to sensing server (source: ${h.source ?? 'unknown'})`);
     openWS(); startPolling();
   } catch (e) {
     if (S.mode !== 'demo') log(e.status === 401 ? 'Server rejected request (401) — set RUVIEW_API_TOKEN before starting server.js' : 'No sensing server reachable — showing DEMO data');
     startDemo();
-    retryTimer = setTimeout(tryLive, 8000);
+    retryTimer = setTimeout(tryLive, 15000);
   }
 }
 function openWS(){
@@ -204,6 +248,7 @@ function startPolling(){
     try {
       const st = await getJSON('/api/v1/status');
       S.sourceState = st.source_state || null; S.source = st.source || S.source;
+      S.frameAgeMs = typeof st.last_frame_age_ms === 'number' ? st.last_frame_age_ms : null;
       if (st.source_state === 'stale' && S.mode !== 'stale'){ setMode('stale'); log('Frames stopped arriving (stale)'); }
       else if (st.source_state && st.source_state !== 'stale' && S.mode === 'stale'){ setMode('live'); log('Frames resumed'); }
     } catch (e) { if (e.status == null){ log('Lost connection to sensing server'); clearInterval(pollTimer); tryLive(); return; } }
@@ -247,10 +292,16 @@ function startDemo(){
     });
     const motion = present ? (walking ? 0.55 + 0.25 * Math.random() : 0.08 + 0.05 * Math.random()) : 0.02 * Math.random();
     const kp = present ? demoPose(t, walking) : [];
+    const who = demoWalk(walking, present);
+    const demoNodes = [1, 2, 3].map((id, i) => {
+      const dev = plan.devices.find(d => d.type === 'node' && String(d.nid) === String(id));
+      const prox = (dev && who) ? Math.exp(-Math.hypot(dev.x - who.x, dev.y - who.y) / 2.2) : 0;
+      const a = amp.map((v, k) => Math.max(0, v + (walking ? prox * 6 * (Math.random() - .5) : prox * 0.6 * Math.sin(t * 1.6 + k))));
+      return {node_id:id, rssi_dbm:-40 - i * 7 + Math.random() * 2, amplitude:a, subcarrier_count:56, sync:{csi_fps_ema:20 - i * .3, is_leader:i === 0, is_valid:true}};
+    });
     ingest({
       type:'sensing_update',
-      nodes:[{node_id:1, rssi_dbm:-41 + Math.random()*2, amplitude:amp, subcarrier_count:56, sync:{csi_fps_ema:20, is_leader:true, is_valid:true}},
-             {node_id:2, rssi_dbm:-55 + Math.random()*2, subcarrier_count:56, sync:{csi_fps_ema:19.6, is_leader:false, is_valid:true}}],
+      nodes: demoNodes,
       persons: Array.from({length:demoPersons}, (_, i) => ({id:i, keypoints: i === 0 ? kp : []})),
       vital_signs: present ? {
         breathing_bpm: 60 * breathHz + (Math.random() - .5) * .6,
@@ -369,6 +420,298 @@ function drawPose(){
   $('poseInfo').textContent = `avg conf ${avg.toFixed(2)}`;
 }
 
+// ---------- per-node motion energy (frame-to-frame CSI change vs. that node's own quiet baseline) ----------
+const NE = {};
+function nodeEnergy(n){
+  const id = n.node_id ?? n.id, a = n.amplitude;
+  if (id == null || !Array.isArray(a) || !a.length) return;
+  const e = NE[id] || (NE[id] = {prev:null, fast:0, base:null});
+  if (e.prev && e.prev.length === a.length){
+    let d = 0; for (let k = 0; k < a.length; k++) d += Math.abs(a[k] - e.prev[k]); d /= a.length;
+    e.fast = e.fast * 0.85 + d * 0.15;
+    e.base = e.base == null ? e.fast : (e.fast < e.base ? e.fast : e.base * 0.999 + e.fast * 0.001);
+    const score = Math.max(0, Math.min(1, (e.fast / (e.base || 1e-6) - 1.15) / 3));
+    S.nodeScore[id] = {score, t:performance.now()};
+  }
+  e.prev = a.slice();
+}
+
+// ---------- floor plan ----------
+const PLAN_KEY = 'ruview.plan.v1';
+function samplePlan(){
+  return {w:12, h:9, sample:true, rooms:[
+    {id:'r1', name:'Living room', x:0, y:0, w:7, h:5},
+    {id:'r2', name:'Kitchen', x:7, y:0, w:5, h:5},
+    {id:'r3', name:'Bedroom', x:0, y:5, w:6, h:4},
+    {id:'r4', name:'Bathroom', x:6, y:5, w:3, h:4},
+    {id:'r5', name:'Office', x:9, y:5, w:3, h:4},
+  ], devices:[
+    {id:'d1', type:'router', x:6.5, y:4.5},
+    {id:'d2', type:'laptop', x:10.5, y:7},
+    {id:'d3', type:'node', nid:1, x:1, y:1},
+    {id:'d4', type:'node', nid:2, x:11, y:1},
+    {id:'d5', type:'node', nid:3, x:3, y:8},
+  ]};
+}
+let plan;
+try { plan = JSON.parse(localStorage.getItem(PLAN_KEY)); } catch {}
+if (!plan || !Array.isArray(plan.rooms)) plan = samplePlan();
+const savePlan = () => { try { localStorage.setItem(PLAN_KEY, JSON.stringify(plan)); } catch {} };
+const uid = () => Math.random().toString(36).slice(2, 9);
+const snap = (v) => Math.round(v * 2) / 2;
+const NS = 'http://www.w3.org/2000/svg';
+const svg = $('plan');
+let mode = 'select', drag = null, draft = null;
+
+function el(tag, attrs, parent){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; }
+function svgPoint(ev){ const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; const q = p.matrixTransform(svg.getScreenCTM().inverse()); return {x:Math.max(0, Math.min(plan.w, q.x)), y:Math.max(0, Math.min(plan.h, q.y))}; }
+const roomAt = (x, y) => [...plan.rooms].reverse().find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+
+let gStatic, gOverlay;
+function renderPlan(){
+  svg.setAttribute('viewBox', `-0.3 -0.3 ${plan.w + 0.6} ${plan.h + 0.6}`);
+  svg.innerHTML = '';
+  const grid = el('g', {stroke:css('--line'), 'stroke-width':0.02}, svg);
+  for (let x = 0; x <= plan.w; x++) el('line', {x1:x, y1:0, x2:x, y2:plan.h}, grid);
+  for (let y = 0; y <= plan.h; y++) el('line', {x1:0, y1:y, x2:plan.w, y2:y}, grid);
+  gStatic = el('g', {}, svg);
+  gOverlay = el('g', {'pointer-events':'none'}, svg);
+  plan.rooms.forEach(r => {
+    const g = el('g', {'data-kind':'room', 'data-id':r.id, cursor: mode === 'select' ? 'move' : mode === 'delete' ? 'not-allowed' : 'crosshair'}, gStatic);
+    el('rect', {x:r.x, y:r.y, width:r.w, height:r.h, rx:0.08, fill:css('--panel'), stroke:css('--muted'), 'stroke-width':0.06}, g);
+    const t = el('text', {x:r.x + r.w / 2, y:r.y + 0.55, 'text-anchor':'middle', 'font-size':0.42, fill:css('--muted'), 'font-weight':600}, g);
+    t.textContent = r.name;
+    const sz = el('text', {x:r.x + r.w / 2, y:r.y + 0.9, 'text-anchor':'middle', 'font-size':0.26, fill:css('--muted'), opacity:0.8}, g);
+    sz.textContent = `${r.w} × ${r.h} m`;
+  });
+  if (draft) el('rect', {x:draft.x, y:draft.y, width:draft.w, height:draft.h, fill:'none', stroke:css('--accent'), 'stroke-width':0.06, 'stroke-dasharray':'0.2 0.12'}, gStatic);
+  plan.devices.forEach(d => {
+    const g = el('g', {'data-kind':'dev', 'data-id':d.id, cursor: mode === 'delete' ? 'not-allowed' : 'move', transform:`translate(${d.x} ${d.y})`}, gStatic);
+    if (d.type === 'router'){ el('rect', {x:-0.28, y:-0.28, width:0.56, height:0.56, transform:'rotate(45)', fill:css('--accent')}, g); }
+    else if (d.type === 'laptop'){ el('rect', {x:-0.36, y:-0.24, width:0.72, height:0.48, rx:0.06, fill:css('--ink')}, g); }
+    else { el('circle', {r:0.3, fill:css('--breath')}, g); const n = el('text', {y:0.11, 'text-anchor':'middle', 'font-size':0.3, fill:'#fff', 'font-weight':700}, g); n.textContent = d.nid; }
+    const lb = el('text', {y:0.68, 'text-anchor':'middle', 'font-size':0.28, fill:css('--ink')}, g);
+    lb.textContent = d.type === 'router' ? 'Router' : d.type === 'laptop' ? 'Laptop' : `Node ${d.nid}`;
+  });
+  $('planW').value = plan.w; $('planH').value = plan.h;
+}
+
+svg.addEventListener('pointerdown', (ev) => {
+  const p = svgPoint(ev), hit = ev.target.closest('[data-kind]');
+  const kind = hit?.dataset.kind, id = hit?.dataset.id;
+  if (mode === 'delete' && hit){
+    if (kind === 'room') plan.rooms = plan.rooms.filter(r => r.id !== id); else plan.devices = plan.devices.filter(d => d.id !== id);
+    plan.sample = false; savePlan(); renderPlan(); return;
+  }
+  if (mode === 'room'){ drag = {kind:'draft', x0:snap(p.x), y0:snap(p.y)}; draft = {x:drag.x0, y:drag.y0, w:0, h:0}; svg.setPointerCapture(ev.pointerId); return; }
+  if (mode === 'router' || mode === 'laptop' || mode === 'node'){
+    const dev = {id:uid(), type:mode, x:snap(p.x), y:snap(p.y)};
+    if (mode === 'node'){
+      const used = plan.devices.filter(d => d.type === 'node').map(d => +d.nid);
+      const ans = prompt('ESP32 node ID (the node_id the sensing server reports):', String(used.length ? Math.max(...used) + 1 : 1));
+      if (ans == null || ans.trim() === '') return;
+      dev.nid = ans.trim();
+    }
+    plan.devices.push(dev); plan.sample = false; savePlan(); setPlanMode('select'); return;
+  }
+  if (mode === 'select' && hit){
+    const obj = kind === 'room' ? plan.rooms.find(r => r.id === id) : plan.devices.find(d => d.id === id);
+    drag = {kind, obj, dx:p.x - obj.x, dy:p.y - obj.y}; svg.setPointerCapture(ev.pointerId);
+  }
+});
+svg.addEventListener('pointermove', (ev) => {
+  if (!drag) return;
+  const p = svgPoint(ev);
+  if (drag.kind === 'draft'){
+    const x1 = snap(p.x), y1 = snap(p.y);
+    draft = {x:Math.min(drag.x0, x1), y:Math.min(drag.y0, y1), w:Math.abs(x1 - drag.x0), h:Math.abs(y1 - drag.y0)};
+  } else {
+    const o = drag.obj, step = drag.kind === 'room' ? snap : (v) => Math.round(v * 4) / 4;
+    o.x = Math.max(0, Math.min(plan.w - (o.w || 0), step(p.x - drag.dx)));
+    o.y = Math.max(0, Math.min(plan.h - (o.h || 0), step(p.y - drag.dy)));
+  }
+  renderPlan();
+});
+svg.addEventListener('pointerup', () => {
+  if (!drag) return;
+  if (drag.kind === 'draft'){
+    if (draft && draft.w >= 1 && draft.h >= 1){
+      const name = prompt('Room name:', `Room ${plan.rooms.length + 1}`);
+      if (name != null) plan.rooms.push({id:uid(), name:name.trim() || 'Room', ...draft});
+    }
+    draft = null;
+  }
+  drag = null; plan.sample = false; savePlan(); renderPlan();
+});
+svg.addEventListener('dblclick', (ev) => {
+  const hit = ev.target.closest('[data-kind="room"]'); if (!hit) return;
+  const r = plan.rooms.find(x => x.id === hit.dataset.id);
+  const name = prompt('Rename room:', r.name);
+  if (name != null && name.trim()){ r.name = name.trim(); plan.sample = false; savePlan(); renderPlan(); }
+});
+function setPlanMode(m){
+  mode = m;
+  document.querySelectorAll('#toolbar [data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  $('placeHint').textContent = {select:'drag to move · double-click a room to rename', room:'drag on the grid to draw a room', router:'click where your router is', laptop:'click where your laptop is', node:'click where an ESP32 node is', delete:'click a room or device to remove it'}[m];
+  renderPlan();
+}
+document.querySelectorAll('#toolbar [data-mode]').forEach(b => b.onclick = () => setPlanMode(b.dataset.mode));
+$('planSample').onclick = () => { if (confirm('Replace your floor plan with the sample?')){ plan = samplePlan(); savePlan(); renderPlan(); } };
+$('planClear').onclick = () => { if (confirm('Clear all rooms and devices?')){ plan = {w:plan.w, h:plan.h, rooms:[], devices:[]}; savePlan(); renderPlan(); } };
+['planW', 'planH'].forEach(id => $(id).onchange = () => {
+  const v = Math.max(3, Math.min(60, Math.round(+$(id).value || 0)));
+  plan[id === 'planW' ? 'w' : 'h'] = v; plan.sample = false; savePlan(); renderPlan();
+});
+
+// ---------- where are you? ----------
+const FRESH = 3000;
+function locate(){
+  if (S.persons === 0) return {kind:'empty'};
+  const now = performance.now();
+  const placed = plan.devices.filter(d => d.type === 'node' && S.nodeScore[d.nid] && now - S.nodeScore[d.nid].t < FRESH)
+    .map(d => ({d, s:S.nodeScore[d.nid].score}));
+  if (placed.length >= 3){
+    const tot = placed.reduce((a, n) => a + n.s * n.s, 0);
+    if (tot < 0.02){
+      if (S.lastFix && now - S.lastFix.t < 30000) return {kind:'last', ...S.lastFix};
+      return {kind:'still', n:placed.length};
+    }
+    let x = 0, y = 0; placed.forEach(n => { x += n.d.x * n.s * n.s; y += n.d.y * n.s * n.s; }); x /= tot; y /= tot;
+    const prev = S.lastFix && now - S.lastFix.t < 3000 ? S.lastFix : null;
+    if (prev){ x = prev.x * 0.85 + x * 0.15; y = prev.y * 0.85 + y * 0.15; }
+    S.lastFix = {x, y, t:now};
+    return {kind:'point', x, y};
+  }
+  if (placed.length >= 1){
+    const best = placed.sort((a, b) => b.s - a.s)[0];
+    return {kind:'near', dev:best.d, n:placed.length};
+  }
+  const laptop = plan.devices.find(d => d.type === 'laptop');
+  if (S.persons > 0 && laptop) return {kind:'range', dev:laptop};
+  return {kind:'none'};
+}
+let lastRoom = null;
+function renderOverlay(){
+  if (!gOverlay || drag) return;
+  gOverlay.innerHTML = '';
+  const L = locate(), person = css('--person');
+  const hiRoom = (r) => r && el('rect', {x:r.x, y:r.y, width:r.w, height:r.h, rx:0.08, fill:person, opacity:0.16, stroke:person, 'stroke-width':0.08}, gOverlay);
+  let text = '—', sub = '', room = null;
+  if (L.kind === 'point' || L.kind === 'last'){
+    room = roomAt(L.x, L.y); hiRoom(room);
+    el('circle', {cx:L.x, cy:L.y, r:1.5, fill:person, opacity:0.12, stroke:person, 'stroke-width':0.05, 'stroke-dasharray':'0.15 0.1'}, gOverlay);
+    el('circle', {cx:L.x, cy:L.y, r:0.22, fill:person, opacity:L.kind === 'last' ? 0.5 : 1}, gOverlay);
+    text = L.kind === 'point' ? `You're in the ${room ? room.name : 'space between rooms'}` : `Last seen in the ${room ? room.name : 'space between rooms'}`;
+    sub = L.kind === 'point' ? 'Rough estimate from which nodes see the most movement · accuracy about ±1.5 m'
+                             : 'Holding still — position held from the last movement';
+  } else if (L.kind === 'near'){
+    room = roomAt(L.dev.x, L.dev.y); hiRoom(room);
+    el('circle', {cx:L.dev.x, cy:L.dev.y, r:0.6, fill:'none', stroke:person, 'stroke-width':0.08}, gOverlay);
+    text = `Activity is strongest near Node ${L.dev.nid}${room ? ` (${room.name})` : ''}`;
+    sub = `Room-level only — ${L.n} node${L.n > 1 ? 's' : ''} placed. Place 3+ nodes around your home to pinpoint a position.`;
+  } else if (L.kind === 'range'){
+    el('circle', {cx:L.dev.x, cy:L.dev.y, r:5, fill:person, opacity:0.1, stroke:person, 'stroke-width':0.05, 'stroke-dasharray':'0.2 0.12'}, gOverlay);
+    text = 'Someone is within range of the laptop';
+    sub = 'Laptop WiFi can tell someone is nearby (≈5 m), not where. Exact position needs 3+ ESP32 nodes.';
+  } else if (L.kind === 'still'){
+    text = 'Someone is here, holding still'; sub = 'Position is found from movement — move around briefly to get a fix.';
+  } else if (L.kind === 'empty'){
+    text = 'Nobody detected'; sub = '';
+  } else {
+    text = 'Location unavailable'; sub = 'Place your laptop or ESP32 nodes on the plan.';
+  }
+  $('locText').innerHTML = ''; $('locText').append(text); const sm = document.createElement('small'); sm.textContent = sub; $('locText').append(sm);
+  const rn = room?.name || null;
+  if (rn && rn !== lastRoom && (L.kind === 'point' || L.kind === 'near')) log(`Location: ${rn}`);
+  if (rn) lastRoom = rn;
+}
+
+// demo walker: moves between room centres while "walking"
+let walker = null;
+function demoWalk(walking, present){
+  if (!present || !plan.rooms.length) return null;
+  const centre = (r) => ({x:r.x + r.w / 2, y:r.y + r.h / 2});
+  if (!walker){ walker = {...centre(plan.rooms[0]), tgt:null}; }
+  if (walking){
+    if (!walker.tgt) walker.tgt = centre(plan.rooms[Math.floor(Math.random() * plan.rooms.length)]);
+    const dx = walker.tgt.x - walker.x, dy = walker.tgt.y - walker.y, d = Math.hypot(dx, dy), stepLen = 1.1 * 0.05;
+    if (d < stepLen) walker.tgt = null; else { walker.x += dx / d * stepLen; walker.y += dy / d * stepLen; }
+  }
+  return walker;
+}
+
+// ---------- health checklist ----------
+async function pollWifi(){
+  if (location.protocol === 'file:') return;
+  try { S.wifi = await getJSON('/local/wifi'); } catch { S.wifi = {available:false, reason:'dashboard server too old — restart node server.js'}; }
+}
+function checks(){
+  const demo = S.mode === 'demo', live = S.mode === 'live' || S.mode === 'stale';
+  const src = String(S.source || '').toLowerCase();
+  const csi = /esp32|csi|mediatek|qualcomm|realtek/.test(src) || S.nodes.some(n => Array.isArray(n.amplitude) && n.amplitude.length);
+  const rssiOnly = live && /wifi/.test(src) && !csi;
+  const now = performance.now(), age = live ? (S.frameAgeMs ?? (S.lastFrame ? now - S.lastFrame : null)) : null;
+  const w = S.wifi;
+  const placedNodes = plan.devices.filter(d => d.type === 'node');
+  const reporting = Object.keys(S.nodeScore).filter(id => now - S.nodeScore[id].t < FRESH);
+  const placedReporting = placedNodes.filter(d => reporting.includes(String(d.nid)));
+  const C = [];
+  const add = (st, title, detail) => C.push({st, title, detail});
+
+  add(location.protocol === 'file:' ? 'fail' : 'ok', 'Dashboard server running',
+      location.protocol === 'file:' ? 'Opened as a file. Run "node server.js" and open http://localhost:8090.' : `Serving on ${location.host}`);
+
+  if (!w) add('na', 'Laptop connected to WiFi', 'Checking…');
+  else if (!w.available) add('na', 'Laptop connected to WiFi', w.reason || 'Not available');
+  else if (!/^connected/i.test(w.state || '')) add('fail', 'Laptop connected to WiFi', `WiFi is ${w.state || 'off'}. Connect to your home network.`);
+  else add(w.signal != null && w.signal < 50 ? 'warn' : 'ok', 'Laptop connected to WiFi',
+      `${w.ssid || 'Unknown network'} · signal ${w.signal ?? '?'}%${w.radio ? ' · ' + w.radio : ''}${w.band ? ' · ' + w.band : ''}${w.signal != null && w.signal < 50 ? ' — move closer to the router' : ''}`);
+
+  add(live ? 'ok' : 'fail', 'RuView sensing server reachable',
+      live ? `Connected (${S.source || 'unknown source'})` : 'Not running, so the dashboard is showing DEMO data. Start sensing-server, then this turns green.');
+
+  if (demo) add('warn', 'Sensing source', 'Demo simulation — not your real room.');
+  else if (/simul/.test(src) || S.sourceState === 'synthetic') add('warn', 'Sensing source', 'Simulated data from the server — not your real room.');
+  else if (rssiOnly) add('warn', 'Sensing source', 'Laptop WiFi (signal strength only): presence + motion. No pose or exact location.');
+  else if (live) add('ok', 'Sensing source', `${S.source} (CSI) — full sensing`);
+  else add('na', 'Sensing source', '—');
+
+  if (!live) add('na', 'Live data arriving', 'Waiting for a sensing server.');
+  else if (S.mode === 'stale' || (age != null && age > 5000)) add('fail', 'Live data arriving', 'Frames stopped. Check the sensor/WiFi and that only one program uses UDP 5005.');
+  else add('ok', 'Live data arriving', `${$('fps').textContent}${age != null ? ` · last frame ${Math.round(age)} ms ago` : ''}`);
+
+  if (S.quality == null) add('na', 'Signal quality', 'No reading yet.');
+  else add(S.quality >= 0.4 ? 'ok' : 'warn', 'Signal quality', `${S.quality.toFixed(2)} ${S.quality >= 0.4 ? '(good)' : '— aim for 0.40+; move sensor closer / away from metal'}`);
+
+  add(S.persons == null ? 'na' : 'ok', 'Presence detection', S.persons == null ? 'No reading yet.' : S.persons ? `${S.persons} person${S.persons > 1 ? 's' : ''} detected` : 'Working — room currently empty');
+
+  const vOk = (S.bConf ?? 0) >= 0.5;
+  add(S.persons ? (vOk ? 'ok' : 'warn') : 'na', 'Breathing / heart readings',
+      !S.persons ? 'Needs someone in the room.' : vOk ? `Breathing confidence ${S.bConf.toFixed(2)}` : 'Low confidence — sit still within 1–2 m of the sensor for 30 s.');
+
+  const userRooms = plan.rooms.length && !plan.sample;
+  add(userRooms ? 'ok' : 'warn', 'Floor plan of your place',
+      userRooms ? `${plan.rooms.length} room${plan.rooms.length > 1 ? 's' : ''}, ${plan.w} × ${plan.h} m` : plan.rooms.length ? 'Using the sample plan — draw your own rooms below.' : 'No rooms yet — use "+ Room".');
+
+  const hasRouter = plan.devices.some(d => d.type === 'router'), hasLaptop = plan.devices.some(d => d.type === 'laptop');
+  const unplaced = reporting.filter(id => !placedNodes.some(d => String(d.nid) === id));
+  add(hasRouter && (hasLaptop || placedNodes.length) && !unplaced.length ? 'ok' : 'warn', 'Router and sensors placed on plan',
+      unplaced.length ? `Node ${unplaced.join(', ')} is reporting but not on the plan — add it with "+ ESP32 node".`
+      : `${hasRouter ? 'Router ✓' : 'Router missing'} · ${hasLaptop ? 'Laptop ✓' : 'Laptop not placed'} · ${placedNodes.length} node${placedNodes.length === 1 ? '' : 's'}`);
+
+  if (placedReporting.length >= 3) add('ok', 'Locate me in my place', `${placedReporting.length} placed nodes reporting — position estimate on (±1.5 m).`);
+  else if (placedReporting.length >= 1) add('warn', 'Locate me in my place', `Room-level only (${placedReporting.length} node${placedReporting.length > 1 ? 's' : ''}). Add ${3 - placedReporting.length} more ESP32 node${3 - placedReporting.length > 1 ? 's' : ''} for a position.`);
+  else add('fail', 'Locate me in my place', 'Not possible with laptop WiFi alone. Needs 3+ ESP32-S3 nodes (~$9 each) placed around your home.');
+
+  return C;
+}
+function renderChecks(){
+  const C = checks(), ok = C.filter(c => c.st === 'ok').length;
+  $('healthScore').textContent = `${ok}/${C.length} ready${S.mode === 'demo' ? ' · demo' : ''}`;
+  const icon = {ok:'✓', warn:'!', fail:'✕', na:'–'};
+  $('checks').innerHTML = C.map(c => `<li class="${c.st}"><span class="ic">${icon[c.st]}</span><b>${esc(c.title)}</b><span class="d">${esc(c.detail)}</span></li>`).join('');
+}
+
 // ---------- DOM updates ----------
 const fmt = (v, d = 1) => v == null ? '–' : v.toFixed(d);
 const pct = (el, v) => { $(el).style.width = (v == null ? 0 : Math.max(0, Math.min(1, v)) * 100) + '%'; };
@@ -408,6 +751,9 @@ setInterval(() => {
   S.motionHist.push({m:S.motion, p:(S.persons ?? 0) > 0}); if (S.motionHist.length > MAXV) S.motionHist.shift();
 }, 500);
 setInterval(updateDOM, 250);
+setInterval(renderOverlay, 250);
+setInterval(renderChecks, 1000);
+renderPlan(); pollWifi(); setInterval(pollWifi, 10000);
 (function frame(){ drawWaterfall(); drawVitals(); drawMotion(); drawPose(); requestAnimationFrame(frame); })();
 
 // boot: when opened as a plain file there is no proxy, so go straight to demo
